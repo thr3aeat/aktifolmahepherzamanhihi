@@ -1,38 +1,34 @@
-# 🚀 Eko Yıldız - 7/24 Anti-Detection Discord User Token
+# 🚀 Eko Yıldız - 7/24 Anti-DDoS & Anti-Detection Discord User Token
 
-Bu proje, Discord hesabınızı (User Token) **Render.com** üzerinde 7/24 kesintisiz online tutar. Ban riskini en aza indirmek için **gelişmiş Anti-Detection (Tespit Engelleme)** teknikleri kullanır.
+Bu proje, Discord hesabınızı (User Token) **Render.com** üzerinde 7/24 kesintisiz online tutar. Ban ve DDoS saldırı risklerini engellemek için **Anti-Detection** ve **Anti-DDoS Güvenlik Katmanları** ile donatılmıştır.
 
 ---
 
-## 🛡️ Ban Riskini Azaltma (Anti-Detection) Teknikleri
+## 🛡️ Anti-DDoS & Güvenlik Özellikleri
 
-1. 🔌 **Yalnızca WebSocket (Gateway) Bağlantısı:**
-   - Kod **sıfır (0) REST API isteği** atar (mesaj göndermez, sunucuya katılmaz, DM atmaz).
-   - Yalnızca hesabın çevrim içi kalmasını ve zengin durum (Rich Presence) yansıtmasını sağlar.
+1. ⚡ **Express Rate Limiting (IP Sınırlaması):**
+   - Her IP için dakikada maksimum 60 istek sınırı konulmuştur. Sunucunuza atılacak bot/DDoS botnet saldırıları anında engelleyip `HTTP 429 Too Many Requests` döndürür.
 
-2. 💻 **Client Headers & Browser Spoofing:**
-   - Discord'a bağlantı kurulurken orijinal **Discord Windows 10 Desktop Client** bilgileri (`release_channel: 'stable'`, `os: 'Windows'`) taklit edilir.
+2. ⛑️ **Helmet HTTP Güvenlik Başlıkları:**
+   - XSS (Cross-Site Scripting), MIME Sniffing, Clickjacking ve Header manipülasyonu açıklarına karşı sunucuyu zırhlar.
 
-3. 🌙 **Gece İnsan Taklidi (Natural Human Simulation):**
-   - Hesabın 30 gün boyunca 7/24 aralıksız "Çevrim içi" kalması yapay zeka tespit sistemlerine takılabilir.
-   - Kod, **Türkiye saati ile gece 01:00 - 08:00** arasında hesabın durumunu otomatik olarak **"Boşta" (Idle / Sleep)** moduna alır.
-   - Gündüz saatlerinde rastgele %10 ihtimalle kısa mola (kahve molası simülasyonu) verir.
+3. 📦 **Payload Size Cap (Maksimum 10kb Paket Sınırı):**
+   - Sunucuya büyük veri paketleri yollayarak bellek doldurma (RAM Exhaustion) DDoS saldırılarını engeller.
 
-4. 📺 **Özel Etkinlik:**
-   - Profilinizde **"Eko Yıldız youtube kanalına abone ol!"** mor yayıncı rozeti gösterilir.
+4. 🔄 **Reverse Proxy IP Trust:**
+   - Render'ın yük dengeleyicisi arkasında gerçek istemci IP'lerini doğru tespit ederek güvenli sınırlama sağlar.
+
+---
+
+## 🔒 Anti-Detection (Ban Engelleme) Özellikleri
+- 🔌 **Sadece WebSocket (Gateway):** 0 REST API isteği.
+- 💻 **Windows 10 Desktop Client Spoofing:** Discord masaüstü istemci taklidi.
+- 🌙 **Gece İnsan Uykusu Taklidi:** Gece 01:00 - 08:00 (TSİ) arası Boşta (Idle) mod.
+- 📺 **Mor Yayın Rozeti:** Profilde **"Eko Yıldız youtube kanalına abone ol!"** yayını.
 
 ---
 
 ## 🛠️ CronJob Bağlantı Adresleri
-CronJob bağlarken şu adreslerden birini kullanabilirsiniz:
-
-- **Hızlı Ping:** `https://user-token-724.onrender.com/ping` (Cevap: `pong`)
+CronJob servisleriniz için 120 req/min esnek limitli adresler:
+- **Ping:** `https://user-token-724.onrender.com/ping`
 - **Health JSON:** `https://user-token-724.onrender.com/health`
-- **Ana Dashboard:** `https://user-token-724.onrender.com/`
-
----
-
-## 💻 Kurulum
-1. `.env` veya Render EnvironmentVariables: **Sadece `TOKEN`**
-2. Render Build Command: `npm install`
-3. Render Start Command: `npm start`

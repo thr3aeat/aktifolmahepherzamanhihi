@@ -1,5 +1,7 @@
 require('dotenv').config();
 const express = require('express');
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 const { Client } = require('discord.js-selfbot-v13');
 const axios = require('axios');
 
@@ -8,11 +10,45 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const startTime = Date.now();
 
+// Render / Reverse Proxy IP Güvenlik Yapılandırması
+app.set('trust proxy', 1);
+
 // -------------------------------------------------------------
-// 1. DISCORD SELFBOT CLIENT - (ANTI-DETECTION HEADER & GATEWAY CONFIG)
+// ANTI-DDOS VE GÜVENLİK MIDDLEWARE'LERİ
 // -------------------------------------------------------------
-// Sadece WebSocket (Gateway) bağlantısı kullanılır. REST API isteği GÖNDERİLMEZ.
-// Discord Masaüstü Windows istemcisi taklidi yapılır.
+// 1. Helmet Güvenlik Başlıkları (XSS, MIME Sniffing, Frameguard koruması)
+app.use(helmet({
+  contentSecurityPolicy: false // inline scriptler için devrede
+}));
+
+// 2. İstek Boyutu Sınırlaması (Payload Flooding DDoS koruması)
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+
+// 3. Genel Rate Limiting (Dakikada maks 60 istek - DDoS Saldırı Engelleyici)
+const globalLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 Dakika
+  max: 60, // Her IP için maksimum 60 istek
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    error: 'Çok fazla istek gönderildi! Anti-DDoS koruması devrede. Lütfen 1 dakika bekleyin.'
+  }
+});
+app.use(globalLimiter);
+
+// 4. CronJob & Ping Endpoint'leri için Özel Esnek Limiter (Dakikada maks 120 istek)
+const cronPingLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// -------------------------------------------------------------
+// DISCORD SELFBOT CLIENT - (ANTI-DETECTION HEADER & GATEWAY CONFIG)
+// -------------------------------------------------------------
 const client = new Client({
   checkUpdate: false,
   ws: {
@@ -28,26 +64,23 @@ const client = new Client({
 });
 
 // Anti-Detection İnsan Taklidi Değişkenleri
-let currentMode = 'ONLINE'; // 'ONLINE' | 'IDLE_SLEEP' | 'MICRO_BREAK'
+let currentMode = 'ONLINE'; 
 let lastStatusChange = new Date();
 
 // Gece Saatlerinde Sleep/Idle Simülasyonu (01:00 - 08:00 arası Türkiye Saati / UTC+3)
 function getSimulatedHumanStatus() {
   const date = new Date();
-  // UTC+3 Türkiye Saat Dilimine Göre Saat
   const trtHour = (date.getUTCHours() + 3) % 24;
 
-  // Gece 01:00 ile 08:00 arası (İnsan Uyku Taklidi) -> Idle (Boşta) veya DND
   if (trtHour >= 1 && trtHour < 8) {
     currentMode = 'IDLE_SLEEP (Gece İnsan Uykusu Taklidi)';
     return {
-      status: 'idle', // Gece boşta görünür
+      status: 'idle',
       activityName: 'Eko Yıldız youtube kanalına abone ol!',
       activityType: 'STREAMING'
     };
   }
 
-  // Gündüz Saatleri (Rastgele %10 şansla 15dk kahve molası / idle)
   const isMicroBreak = Math.random() < 0.10;
   if (isMicroBreak) {
     currentMode = 'MICRO_BREAK (Mola Simülasyonu)';
@@ -75,7 +108,7 @@ function updatePresenceHumanSimulated() {
       activities: [{
         name: sim.activityName,
         type: sim.activityType,
-        url: 'https://www.twitch.tv/discord' // Mor Yayın Rozeti
+        url: 'https://www.twitch.tv/discord'
       }]
     });
     lastStatusChange = new Date();
@@ -86,7 +119,7 @@ function updatePresenceHumanSimulated() {
 }
 
 // -------------------------------------------------------------
-// 2. ŞOK EDİCİ GÖRSEL DASHBOARD (GET /)
+// ŞOK EDİCİ GÖRSEL DASHBOARD (GET /)
 // -------------------------------------------------------------
 app.get('/', (req, res) => {
   const userTag = client.user ? client.user.tag : 'Bağlanıyor...';
@@ -99,7 +132,7 @@ app.get('/', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Eko Yıldız | 7/24 Anti-Detection User Token</title>
+  <title>Eko Yıldız | 7/24 Anti-DDoS & Anti-Detection Token</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;900&display=swap" rel="stylesheet">
@@ -157,7 +190,7 @@ app.get('/', (req, res) => {
       display: flex;
       flex-direction: column;
       align-items: center;
-      margin-bottom: 20px;
+      margin-bottom: 15px;
     }
     .avatar-wrapper {
       position: relative;
@@ -205,19 +238,32 @@ app.get('/', (req, res) => {
       border: 1px solid rgba(255, 255, 255, 0.08);
     }
 
-    /* Anti-Detection Shield Badge */
-    .anti-ban-badge {
+    /* Shields Grid */
+    .shields-wrapper {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 15px 0 18px 0;
+    }
+    .shield-badge {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.3);
-      color: #34d399;
-      font-size: 13px;
+      gap: 6px;
+      font-size: 12px;
       font-weight: 700;
-      padding: 8px 18px;
+      padding: 6px 14px;
       border-radius: 30px;
-      margin: 15px 0 20px 0;
+    }
+    .shield-ddos {
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      color: #60a5fa;
+    }
+    .shield-antiban {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #34d399;
     }
 
     /* Banner */
@@ -226,7 +272,7 @@ app.get('/', (req, res) => {
       border: 1px solid rgba(236, 72, 153, 0.3);
       border-radius: 18px;
       padding: 16px 20px;
-      margin-bottom: 22px;
+      margin-bottom: 20px;
     }
     .banner-title {
       font-size: 11px;
@@ -265,14 +311,14 @@ app.get('/', (req, res) => {
       text-decoration: none;
       box-shadow: 0 10px 25px rgba(255, 0, 0, 0.4);
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      margin-bottom: 22px;
+      margin-bottom: 20px;
     }
     .yt-btn:hover {
       transform: translateY(-3px) scale(1.02);
       box-shadow: 0 15px 35px rgba(255, 0, 0, 0.6);
     }
 
-    /* Anti-Detection Security Checklist Cards */
+    /* Security Checklist Cards */
     .security-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
@@ -355,11 +401,13 @@ app.get('/', (req, res) => {
       <div class="user-tag">⚡ 7/24 Aktif User Token</div>
     </div>
 
-    <div class="anti-ban-badge">
-      <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
-        <path fill-rule="evenodd" d="M10 1.944A11.954 11.954 0 012.166 5C2.056 5.649 2 6.319 2 7c0 5.225 3.34 9.67 8 11.317C14.66 16.67 18 12.225 18 7c0-.681-.056-1.35-.166-2.001A11.954 11.954 0 0110 1.944zM11 14a1 1 0 11-2 0 1 1 0 012 0zm0-7a1 1 0 10-2 0v3a1 1 0 102 0V7z" clip-rule="evenodd"/>
-      </svg>
-      ANTI-DETECTION SYSTEM ACTIVE (BAN RISK MINIMIZED)
+    <div class="shields-wrapper">
+      <div class="shield-badge shield-ddos">
+        🛡️ ANTI-DDOS FLOOD PROTECTION (ACTIVE)
+      </div>
+      <div class="shield-badge shield-antiban">
+        🔒 ANTI-BAN HUMAN SIMULATOR (ACTIVE)
+      </div>
     </div>
 
     <div class="banner">
@@ -374,23 +422,23 @@ app.get('/', (req, res) => {
       Eko Yıldız YouTube Kanalına Abone Ol!
     </a>
 
-    <!-- Anti-Detection Security Cards -->
+    <!-- Security Grid -->
     <div class="security-grid">
       <div class="sec-card">
-        <div class="sec-title">🔌 Sadece Gateway WS</div>
-        <div class="sec-desc">Sadece Socket açık tutulur. 0 REST API spam isteği.</div>
+        <div class="sec-title">🛡️ Rate Limit (IP Sınırlaması)</div>
+        <div class="sec-desc">IP başına dakikada maks 60 istek izni verilir.</div>
       </div>
       <div class="sec-card">
-        <div class="sec-title">🌙 Gece İnsan Taklidi</div>
-        <div class="sec-desc">Gece saatlerinde Boşta (Idle) moda otomatik geçer.</div>
+        <div class="sec-title">📦 Payload Size Cap (10kb)</div>
+        <div class="sec-desc">Büyük paketlerle bellek doldurma DDoS'u engellenir.</div>
       </div>
       <div class="sec-card">
-        <div class="sec-title">💻 Windows Client Spoof</div>
-        <div class="sec-desc">Orijinal Discord Windows masaüstü header'ları kullanılır.</div>
+        <div class="sec-title">⛑️ Helmet Security Headers</div>
+        <div class="sec-desc">XSS, MIME Sniffing ve Header açıklarına karşı korumalı.</div>
       </div>
       <div class="sec-card">
-        <div class="sec-title">☕ Rastgele Mola Simülatörü</div>
-        <div class="sec-desc">Gündüz saatlerinde insan gibi arada mola simüle edilir.</div>
+        <div class="sec-title">🌙 Gece İnsan Uykusu</div>
+        <div class="sec-desc">01:00 - 08:00 saatleri arası Boşta (Idle) moda geçer.</div>
       </div>
     </div>
 
@@ -400,8 +448,8 @@ app.get('/', (req, res) => {
         <div class="stat-value" style="color: #10b981;">${status}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">İnsan Taklit Modu</div>
-        <div class="stat-value" style="font-size: 11px; color: #34d399;">${currentMode}</div>
+        <div class="stat-label">DDoS Koruması</div>
+        <div class="stat-value" style="color: #60a5fa;">AKTİF</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Uptime</div>
@@ -434,44 +482,45 @@ app.get('/', (req, res) => {
 });
 
 // -------------------------------------------------------------
-// 3. CRONJOB VE UPTIME HIZLI HEALTH PING ENDPOINTLERİ
+// CRONJOB VE UPTIME HIZLI HEALTH PING ENDPOINTLERİ
 // -------------------------------------------------------------
-app.get('/ping', (req, res) => {
+app.get('/ping', cronPingLimiter, (req, res) => {
   res.status(200).send('pong');
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', cronPingLimiter, (req, res) => {
   res.status(200).json({
     status: 'ok',
     user: client.user ? client.user.tag : 'connecting',
     humanMode: currentMode,
+    ddosProtection: 'ACTIVE (Rate Limit: 60 req/min per IP)',
     uptime: process.uptime(),
     timestamp: new Date().toISOString()
   });
 });
 
-app.get('/api/status', (req, res) => {
+app.get('/api/status', cronPingLimiter, (req, res) => {
   res.status(200).json({
     botStatus: client.user ? 'online' : 'offline',
     humanSimulationMode: currentMode,
     botTag: client.user ? client.user.tag : null,
     presenceActivity: 'Eko Yıldız youtube kanalına abone ol!',
-    antiDetection: {
-      onlyWebSocketGateway: true,
-      restApiSpamRequests: 0,
-      clientSpoof: 'Discord Desktop Windows 10',
-      humanSleepSimulator: 'ACTIVE (01:00 - 08:00 TRT Idle Sleep)'
+    security: {
+      ddosRateLimiter: 'ACTIVE (60 req/min)',
+      helmetSecurityHeaders: true,
+      payloadLimit: '10kb',
+      onlyWebSocketGateway: true
     },
     uptimeSeconds: process.uptime()
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`[HTTP SUNUCU] Anti-Detection Dashboard & CronJob Portu ${PORT} üzerinde aktif!`);
+  console.log(`[HTTP SUNUCU] Anti-DDoS Dashboard & CronJob Portu ${PORT} üzerinde aktif!`);
 });
 
 // -------------------------------------------------------------
-// 4. RENDER UYKU ENGELLEYİCİ SELF-PING MEKANİZMASI
+// RENDER UYKU ENGELLEYİCİ SELF-PING MEKANİZMASI
 // -------------------------------------------------------------
 const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
 if (RENDER_URL) {
@@ -486,7 +535,7 @@ if (RENDER_URL) {
 }
 
 // -------------------------------------------------------------
-// 5. DISCORD SELFBOT GİRİŞ VE İNSAN TAKLİDİ DÖNGÜSÜ
+// DISCORD SELFBOT GİRİŞ VE İNSAN TAKLİDİ DÖNGÜSÜ
 // -------------------------------------------------------------
 const token = process.env.TOKEN || process.env.USER_TOKEN;
 
@@ -498,14 +547,11 @@ if (!token) {
 client.on('ready', async () => {
   console.log(`====================================================`);
   console.log(`[BAŞARILI] Hesaba Giriş Yapıldı: ${client.user.tag}`);
+  console.log(`[ANTI-DDOS] Rate Limiter & Helmet Güvenlik Kalkanı Aktif.`);
   console.log(`[ANTI-DETECTION] Windows 10 Discord Desktop Client Taklidi Aktif.`);
-  console.log(`[ANTI-DETECTION] 0 REST API İsteği (Sadece Gateway Socket).`);
-  console.log(`[ANTI-DETECTION] Gece İnsan Uykusu Simülatörü Aktif.`);
   console.log(`====================================================`);
 
   updatePresenceHumanSimulated();
-
-  // Her 15 dakikada bir insan taklidi durumunu kontrol et ve güncelle
   setInterval(updatePresenceHumanSimulated, 15 * 60 * 1000);
 });
 
@@ -518,7 +564,7 @@ client.on('error', (err) => {
 });
 
 // -------------------------------------------------------------
-// 6. ÇÖKMELERİ ENGELLEYEN SİSTEM KORUYUCULARI
+// ÇÖKMELERİ ENGELLEYEN SİSTEM KORUYUCULARI
 // -------------------------------------------------------------
 process.on('uncaughtException', (err) => {
   console.error('[SİSTEM HATA - Uncaught Exception]', err.message);
