@@ -131,25 +131,58 @@ Eğer kullanıcı henüz konu belirtmediyse rezervasyon etiketi koyma, sohbeti s
     ...history
   ];
 
-  try {
-    const response = await axios.post(
-      'https://api.groq.com/openai/v1/chat/completions',
-      {
-        model: 'llama-3.3-70b-versatile',
-        messages: messagesPayload,
-        temperature: 0.7,
-        max_tokens: 500
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 15000
-      }
-    );
+  const groqModels = [
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'mixtral-8x7b-32768',
+    'gemma2-9b-it'
+  ];
 
-    const aiReply = response.data?.choices?.[0]?.message?.content || "Üzgünüm, şu anda yanıt veremiyorum.";
+  let response = null;
+  let lastError = null;
+
+  for (const model of groqModels) {
+    try {
+      response = await axios.post(
+        'https://api.groq.com/openai/v1/chat/completions',
+        {
+          model: model,
+          messages: messagesPayload,
+          temperature: 0.7,
+          max_tokens: 500
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${GROQ_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 15000
+        }
+      );
+
+      if (response && response.data?.choices?.[0]?.message?.content) {
+        break; // Başarılı model bulundu, döngüden çık
+      }
+    } catch (err) {
+      lastError = err;
+      const errCode = err?.response?.data?.error?.code;
+      const status = err?.response?.status;
+
+      // Rate Limit (429) veya model sınırı dolduysa sonraki modele geç
+      if (status === 429 || errCode === 'rate_limit_exceeded' || errCode === 'model_not_found') {
+        console.warn(`[GROQ AI LİMİT] ${model} modelinin sınırı doldu/hata verdi. Sonraki modele geçiliyor...`);
+        continue;
+      }
+
+      // API Key hatasında diğer modeller de çalışmayacağı için döngüyü kır
+      if (errCode === 'invalid_api_key') {
+        break;
+      }
+    }
+  }
+
+  if (response && response.data?.choices?.[0]?.message?.content) {
+    const aiReply = response.data.choices[0].message.content;
     history.push({ role: 'assistant', content: aiReply });
     stats.aiInteractions++;
 
@@ -160,24 +193,25 @@ Eğer kullanıcı henüz konu belirtmediyse rezervasyon etiketi koyma, sohbeti s
     }
 
     const cleanReply = aiReply.replace(/\[RESERVATION:.*?\]/g, '').trim();
-
     return { reply: cleanReply, reservationTopic };
-  } catch (err) {
-    const isInvalidKey = err?.response?.data?.error?.code === 'invalid_api_key';
-    if (!isInvalidKey) {
-      console.error('[GROQ AI HATA]', err?.response?.data || err.message);
-    } else {
-      console.warn('[GROQ AI UYARI] Groq API Key geçersiz veya süresi dolmuş. Otomatik rezervasyon köprüsü aktif.');
-    }
-
-    const fallbackTopic = userMessage.length >= 3 ? userMessage.substring(0, 100) : "Eko ile görüşme talebi";
-
-    return {
-      reply: `Merhaba! EkoYıldız ın yani ekonun kişisel hehsap dm sine hoşgeldiniz bu hesap eko ile konuşmak için rezervasyon almak için kurulmuştur.\n\nTalebiniz ("${fallbackTopic}") alındı ve Eko'ya iletildi!`,
-      reservationTopic: fallbackTopic
-    };
   }
+
+  // Tüm modeller başarısız olduğunda yedek otomatik rezervasyon köprüsü
+  const isInvalidKey = lastError?.response?.data?.error?.code === 'invalid_api_key';
+  if (!isInvalidKey && lastError) {
+    console.error('[GROQ AI HATA]', lastError?.response?.data || lastError.message);
+  } else {
+    console.warn('[GROQ AI UYARI] Groq API Key veya tüm modellerin kotası doldu. Otomatik rezervasyon köprüsü aktif.');
+  }
+
+  const fallbackTopic = userMessage.length >= 3 ? userMessage.substring(0, 100) : "Eko ile görüşme talebi";
+
+  return {
+    reply: `Merhaba! EkoYıldız ın yani ekonun kişisel hehsap dm sine hoşgeldiniz bu hesap eko ile konuşmak için rezervasyon almak için kurulmuştur.\n\nTalebiniz ("${fallbackTopic}") alındı ve Eko'ya iletildi!`,
+    reservationTopic: fallbackTopic
+  };
 }
+
 
 // -------------------------------------------------------------
 // DISCORD SELFBOT CLIENT (USER TOKEN - 7/24 AKTİF HESAP)
