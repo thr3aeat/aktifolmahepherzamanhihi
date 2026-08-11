@@ -32,7 +32,6 @@ const GROQ_API_KEY = process.env.GROQTOKEN || process.env.GROQ_TOKEN || process.
 const EKO_USER_ID = process.env.EKO_USER_ID || '1031620522406072350';
 const USER_TOKEN = process.env.TOKEN || process.env.USER_TOKEN;
 const BOT_TOKEN = process.env.BOTTOKEN || process.env.BOT_TOKEN;
-const COUNTING_CHANNEL_ID = process.env.COUNTING_CHANNEL_ID || '1518692512607240425';
 
 const startTime = Date.now();
 
@@ -609,26 +608,6 @@ botClient.on('messageCreate', async (message) => {
 });
 
 userClient.on('messageCreate', async (message) => {
-  // Sayı sayma kanalı otomatik yanıtı (User Token)
-  if (message.channel && message.channel.id === COUNTING_CHANNEL_ID) {
-    if (userClient.user && message.author.id === userClient.user.id) return;
-
-    const content = message.content.trim();
-    if (/^\d+$/.test(content)) {
-      const currentNum = parseInt(content, 10);
-      if (!isNaN(currentNum)) {
-        const nextNum = currentNum + 1;
-        try {
-          await message.channel.send(nextNum.toString());
-          console.log(`[SAYI SAYMA] ${message.author.tag} -> ${currentNum} yazdı | User Token -> ${nextNum} gönderdi.`);
-        } catch (err) {
-          console.error('[SAYI SAYMA HATA]', err.message);
-        }
-      }
-    }
-    return;
-  }
-
   await handleIncomingDM('USER', message);
 });
 
