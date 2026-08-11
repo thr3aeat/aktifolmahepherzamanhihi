@@ -3,6 +3,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const axios = require('axios');
+const commandHandler = require('./commandHandler');
 
 // User Token Client (discord.js-selfbot-v13)
 const { Client: UserClient } = require('discord.js-selfbot-v13');
@@ -599,7 +600,11 @@ botClient.on('ready', () => {
 });
 
 botClient.on('messageCreate', async (message) => {
-  await handleIncomingDM('BOT', message);
+  if (message.guild) {
+    await commandHandler.handleGuildMessage(message);
+  } else {
+    await handleIncomingDM('BOT', message);
+  }
 });
 
 userClient.on('messageCreate', async (message) => {
