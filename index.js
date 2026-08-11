@@ -284,14 +284,43 @@ async function relayMessage(destinationChannelOrUser, msg, headerPrefix = '') {
   }
 }
 
-async function sendUserTokenDM(targetUserId, messageText) {
+async function sendUserTokenDM(targetUserId, messageObjOrText) {
   try {
     if (!userClient.user) return false;
     const targetUser = await userClient.users.fetch(targetUserId);
-    if (targetUser) {
-      await targetUser.send(messageText);
+    if (!targetUser) return false;
+
+    if (typeof messageObjOrText === 'string') {
+      await targetUser.send(messageObjOrText);
+      stats.messagesBridged++;
+      resetActiveChatTimeout();
       return true;
     }
+
+    const msg = messageObjOrText;
+    const options = { content: msg.content || '' };
+
+    if (msg.attachments && msg.attachments.size > 0) {
+      options.files = msg.attachments.map(att => att.url);
+    }
+
+    if (msg.reference && msg.reference.messageId) {
+      try {
+        const refMsg = await msg.channel.messages.fetch(msg.reference.messageId);
+        if (refMsg) {
+          options.content = `> 💬 **[Yanıtlanan Mesaj]:** ${refMsg.content || '(Medya/Dosya)'}\n` + options.content;
+        }
+      } catch (e) {}
+    }
+
+    if (!options.content && (!options.files || options.files.length === 0)) {
+      return false;
+    }
+
+    await targetUser.send(options);
+    stats.messagesBridged++;
+    resetActiveChatTimeout();
+    return true;
   } catch (err) {
     console.error('[USER TOKEN DM HATA]', err.message);
   }
@@ -425,9 +454,11 @@ async function handleIncomingDM(clientType, message) {
       }
 
       try {
-        const targetUser = await botClient.users.fetch(activeChat.userId);
-        const header = `👤 **[Eko]:**`;
-        await relayMessage(targetUser, message, header);
+        const sentViaUserToken = await sendUserTokenDM(activeChat.userId, message);
+        if (!sentViaUserToken) {
+          const targetUser = await botClient.users.fetch(activeChat.userId);
+          await relayMessage(targetUser, message, `👤 **[Eko]:**`);
+        }
       } catch (err) {
         console.error('[KULLANICIYA İLETİM HATA]', err.message);
       }
