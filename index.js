@@ -807,7 +807,10 @@ botClient.on('messageCreate', async (message) => {
     }
   }
 
-  if (message.guild) {
+  const isCommand = message.content && message.content.trim().toLowerCase().startsWith('e!');
+  if (isCommand) {
+    await commandHandler.handleGuildMessage(message);
+  } else if (message.guild) {
     await commandHandler.handleGuildMessage(message);
   } else {
     await handleIncomingDM('BOT', message);
@@ -815,7 +818,12 @@ botClient.on('messageCreate', async (message) => {
 });
 
 userClient.on('messageCreate', async (message) => {
-  await handleIncomingDM('USER', message);
+  const isCommand = message.content && message.content.trim().toLowerCase().startsWith('e!');
+  if (isCommand) {
+    await commandHandler.handleGuildMessage(message);
+  } else {
+    await handleIncomingDM('USER', message);
+  }
 });
 
 async function endActiveChat(reason = 'Konuşma sonlandırıldı.') {

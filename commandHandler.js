@@ -940,12 +940,13 @@ registerCommand({
   name: 'kaçcm',
   aliases: ['kaccm', 'kac-cm', 'kaç-cm', 'cm'],
   category: 'Eğlence',
-  description: '¯\\_(ツ)_/¯',
+  description: 'Rastgele kaç cm olduğunu ölçer.',
   userPermissions: [],
   botPermissions: [],
-  async execute(message) {
+  async execute(message, args) {
+    const target = message.mentions.users.first() || message.author;
     const cm = Math.floor(Math.random() * 35) + 1;
-    return message.reply(`📏 Malafat tam olarak **${cm} cm**! ¯\\_(ツ)_/¯`);
+    return message.reply(`📏 **${target.username}** kullanıcısının malafatı tam olarak **${cm} cm**! ¯\\_(ツ)_/¯`);
   }
 });
 
@@ -1337,7 +1338,7 @@ registerCommand({
 // GİLD MESAJ İŞLEYİCİ (Guild Message Handler)
 // -------------------------------------------------------------
 async function handleGuildMessage(message) {
-  if (!message.guild || message.author.bot) return;
+  if (!message.author || message.author.bot) return;
 
   // 1. AFK Kontrolü (Mesaj Yazan Kişi AFK ise kaldır)
   if (afkData.has(message.author.id)) {
@@ -1346,7 +1347,7 @@ async function handleGuildMessage(message) {
   }
 
   // 2. Etiketlenen Kişi AFK mı?
-  if (message.mentions.users.size > 0) {
+  if (message.mentions && message.mentions.users && message.mentions.users.size > 0) {
     message.mentions.users.forEach(u => {
       if (afkData.has(u.id)) {
         const data = afkData.get(u.id);
@@ -1355,17 +1356,19 @@ async function handleGuildMessage(message) {
     });
   }
 
-  // 3. Seviye / XP Kazanma Mantığı
-  const levelKey = `${message.guild.id}_${message.author.id}`;
-  const userLevel = levelData.get(levelKey) || { xp: 0, level: 1, messages: 0 };
-  userLevel.messages++;
-  userLevel.xp += Math.floor(Math.random() * 10) + 5;
+  // 3. Seviye / XP Kazanma Mantığı (Sadece Sunucu İçi)
+  if (message.guild) {
+    const levelKey = `${message.guild.id}_${message.author.id}`;
+    const userLevel = levelData.get(levelKey) || { xp: 0, level: 1, messages: 0 };
+    userLevel.messages++;
+    userLevel.xp += Math.floor(Math.random() * 10) + 5;
 
-  const nextLevelXp = userLevel.level * 100;
-  if (userLevel.xp >= nextLevelXp) {
-    userLevel.level++;
+    const nextLevelXp = userLevel.level * 100;
+    if (userLevel.xp >= nextLevelXp) {
+      userLevel.level++;
+    }
+    levelData.set(levelKey, userLevel);
   }
-  levelData.set(levelKey, userLevel);
 
   // 4. Komut Ön Eki Kontrolü (`e!` veya `E!`)
   const content = message.content.trim();
@@ -1384,10 +1387,12 @@ async function handleGuildMessage(message) {
   const command = commands.get(commandName) || commands.get(normCmdName);
   if (!command) return;
 
-  // 5. Engellenmiş Komut Kontrolü
-  const disableKey = `${message.guild.id}_${message.channel.id}`;
-  if (disabledCommands.has(disableKey) && disabledCommands.get(disableKey).has(command.name)) {
-    return message.reply('❌ Bu komut bu kanalda yetkililer tarafından engellenmiştir.');
+  // 5. Engellenmiş Komut Kontrolü (Sadece Sunucu İçi)
+  if (message.guild) {
+    const disableKey = `${message.guild.id}_${message.channel.id}`;
+    if (disabledCommands.has(disableKey) && disabledCommands.get(disableKey).has(command.name)) {
+      return message.reply('❌ Bu komut bu kanalda yetkililer tarafından engellenmiştir.');
+    }
   }
 
   // 6. Özel Yetki Kontrolü ("yetkileri her komuta özel olsun")
