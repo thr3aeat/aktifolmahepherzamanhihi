@@ -243,7 +243,7 @@ function updatePresenceHumanSimulated() {
     const activities = (status === 'invisible') ? [] : [{
       name: 'Eko Yıldız youtube kanalına abone ol!',
       type: 'STREAMING',
-      url: 'https://www.twitch.tv/discord'
+      url: 'https://www.youtube.com/@eko8yildiz'
     }];
 
     userClient.user.setPresence({
