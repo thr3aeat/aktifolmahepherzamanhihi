@@ -234,12 +234,18 @@ let currentHumanMode = 'ONLINE (İnsan Taklidi Aktif)';
 let lastAppliedStatus = null;
 
 async function getEkoStatus() {
-  // 1. User Client Arkadaş Listesi Presences
+  // 1. User Client Arkadaş Listesi & Presence Cache
   try {
-    if (userClient && userClient.user && userClient.relationships && userClient.relationships.cache) {
-      const friend = userClient.relationships.cache.get(EKO_USER_ID);
-      if (friend && friend.presence && friend.presence.status) {
-        return friend.presence.status;
+    if (userClient && userClient.user) {
+      const userPresence = userClient.presences?.cache?.get(EKO_USER_ID);
+      if (userPresence && userPresence.status) {
+        return userPresence.status;
+      }
+      if (userClient.relationships && userClient.relationships.cache) {
+        const friend = userClient.relationships.cache.get(EKO_USER_ID);
+        if (friend && friend.presence && friend.presence.status) {
+          return friend.presence.status;
+        }
       }
     }
   } catch (e) {}
@@ -267,6 +273,10 @@ async function getEkoStatus() {
   try {
     if (userClient && userClient.user && userClient.guilds) {
       for (const guild of userClient.guilds.cache.values()) {
+        const p = guild.presences.cache.get(EKO_USER_ID);
+        if (p && p.status) {
+          return p.status;
+        }
         try {
           const m = await guild.members.fetch({ user: EKO_USER_ID, withPresences: true }).catch(() => null);
           if (m && m.presence && m.presence.status) {
@@ -308,7 +318,10 @@ async function updatePresenceHumanSimulated() {
     }
 
     if (targetStatus === 'invisible') {
-      await userClient.user.setStatus('invisible').catch(() => {});
+      await userClient.user.setPresence({
+        status: 'invisible',
+        activities: []
+      }).catch(() => {});
     } else {
       await userClient.user.setPresence({
         status: targetStatus,
