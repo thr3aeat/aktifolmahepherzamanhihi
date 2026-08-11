@@ -317,21 +317,23 @@ async function updatePresenceHumanSimulated() {
       console.log(`[DURUM GÜNCELLEMESİ] Eko Durumu: [${ekoStatus.toUpperCase()}] -> User Token Yeni Durumu: [${targetStatus.toUpperCase()}]`);
     }
 
-    if (targetStatus === 'invisible') {
-      await userClient.user.setPresence({
-        status: 'invisible',
-        activities: []
-      }).catch(() => {});
-    } else {
-      await userClient.user.setPresence({
-        status: targetStatus,
-        activities: [{
-          name: 'Eko Yıldız youtube kanalına abone ol!',
-          type: 'STREAMING',
-          url: 'https://www.youtube.com/@eko8yildiz'
-        }]
-      }).catch(() => {});
-    }
+    try {
+      if (targetStatus === 'invisible') {
+        userClient.user.setPresence({
+          status: 'invisible',
+          activities: []
+        });
+      } else {
+        userClient.user.setPresence({
+          status: targetStatus,
+          activities: [{
+            name: 'Eko Yıldız youtube kanalına abone ol!',
+            type: 'STREAMING',
+            url: 'https://www.youtube.com/@eko8yildiz'
+          }]
+        });
+      }
+    } catch (e) {}
   } catch (err) {
     console.error('[USER PRESENCE HATA]', err.message);
   }
