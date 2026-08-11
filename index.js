@@ -190,41 +190,88 @@ const userClient = new UserClient({
 
 let currentHumanMode = 'ONLINE (İnsan Taklidi Aktif)';
 
+function getEkoStatus() {
+  if (userClient && userClient.user) {
+    const user = userClient.users.cache.get(EKO_USER_ID);
+    if (user && user.presence && user.presence.status) {
+      return user.presence.status;
+    }
+    if (userClient.guilds && userClient.guilds.cache) {
+      for (const guild of userClient.guilds.cache.values()) {
+        const member = guild.members.cache.get(EKO_USER_ID);
+        if (member && member.presence && member.presence.status) {
+          return member.presence.status;
+        }
+      }
+    }
+  }
+
+  if (botClient && botClient.user && botClient.guilds && botClient.guilds.cache) {
+    for (const guild of botClient.guilds.cache.values()) {
+      const member = guild.members.cache.get(EKO_USER_ID);
+      if (member && member.presence && member.presence.status) {
+        return member.presence.status;
+      }
+    }
+  }
+
+  return 'offline';
+}
+
 function updatePresenceHumanSimulated() {
-  if (!userClient.user) return;
+  if (!userClient || !userClient.user) return;
   try {
-    const date = new Date();
-    const trtHour = (date.getUTCHours() + 3) % 24;
+    const ekoStatus = getEkoStatus();
     let status = 'online';
 
-    if (trtHour >= 1 && trtHour < 8) {
+    // Kural 1: Eko çevrim dışı (offline/invisible) ise -> User Token 'idle' (boşta) olsun
+    if (ekoStatus === 'offline' || ekoStatus === 'invisible') {
       status = 'idle';
-      currentHumanMode = 'IDLE_SLEEP (Gece İnsan Uykusu Modu)';
-    } else {
+      currentHumanMode = 'IDLE (Eko Çevrim Dışı Olduğu İçin Boşta)';
+    } 
+    // Kural 2: Eko 'idle' (boşta) ise -> User Token 'invisible' (görünmez) olsun
+    else if (ekoStatus === 'idle') {
+      status = 'invisible';
+      currentHumanMode = 'INVISIBLE (Eko Boşta Olduğu İçin Görünmez)';
+    } 
+    // Kural 3: Eko 'online' / 'dnd' ise -> User Token 'online' (çevrim içi) olsun
+    else {
       status = 'online';
-      currentHumanMode = 'ONLINE (Çevrim içi İnsan Taklidi)';
+      currentHumanMode = 'ONLINE (Eko Çevrim İçi Olduğu İçin Aktif)';
     }
+
+    const activities = (status === 'invisible') ? [] : [{
+      name: 'Eko Yıldız youtube kanalına abone ol!',
+      type: 'STREAMING',
+      url: 'https://www.twitch.tv/discord'
+    }];
 
     userClient.user.setPresence({
       status: status,
-      activities: [{
-        name: 'Eko Yıldız youtube kanalına abone ol!',
-        type: 'STREAMING',
-        url: 'https://www.twitch.tv/discord'
-      }]
+      activities: activities
     });
   } catch (err) {
     console.error('[USER PRESENCE HATA]', err.message);
   }
 }
 
-userClient.on('ready', () => {
+userClient.on('ready', async () => {
   console.log(`====================================================`);
   console.log(`[USER TOKEN AKTİF] Giriş Yapıldı: ${userClient.user.tag}`);
   console.log(`[ANTI-DETECTION] Windows Client Taklidi Aktif.`);
   console.log(`====================================================`);
+  try {
+    await userClient.users.fetch(EKO_USER_ID).catch(() => {});
+  } catch (e) {}
+
   updatePresenceHumanSimulated();
-  setInterval(updatePresenceHumanSimulated, 15 * 60 * 1000);
+  setInterval(updatePresenceHumanSimulated, 30 * 1000);
+});
+
+userClient.on('presenceUpdate', (oldPresence, newPresence) => {
+  if (newPresence && (newPresence.userId === EKO_USER_ID || newPresence.user?.id === EKO_USER_ID)) {
+    updatePresenceHumanSimulated();
+  }
 });
 
 userClient.on('error', (err) => console.error('[USER CLIENT HATA]', err.message));
@@ -235,11 +282,20 @@ userClient.on('error', (err) => console.error('[USER CLIENT HATA]', err.message)
 const botClient = new BotClient({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildPresences,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.MessageContent
   ],
   partials: [Partials.Channel, Partials.Message]
 });
+
+botClient.on('presenceUpdate', (oldPresence, newPresence) => {
+  if (newPresence && (newPresence.userId === EKO_USER_ID || newPresence.user?.id === EKO_USER_ID)) {
+    updatePresenceHumanSimulated();
+  }
+});
+
 
 // -------------------------------------------------------------
 // REZERVASYON VE CANLI SOHBET YÖNETİMİ
