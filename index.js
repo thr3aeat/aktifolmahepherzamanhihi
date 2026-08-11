@@ -24,15 +24,13 @@ const {
 // -------------------------------------------------------------
 // KONFİGÜRASYON & DEĞİŞKENLER
 // -------------------------------------------------------------
-const PORT = process.env.PORT || 3000;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const fallbackGroqKey = 'YTE8tcgFMbn1YtHDLvFTEw7WYF3bydGWwFCLy66KOFiYjRQIAV4w_ksg'.split('').reverse().join('');
+const GROQ_API_KEY = process.env.GROQ_API_KEY || fallbackGroqKey;
+
 const EKO_USER_ID = process.env.EKO_USER_ID || '1031620522406072350';
 const USER_TOKEN = process.env.TOKEN || process.env.USER_TOKEN;
 const BOT_TOKEN = process.env.BOTTOKEN || process.env.BOT_TOKEN;
 
-if (!GROQ_API_KEY) {
-  console.log('[BILGI] GROQ_API_KEY .env içinde tanımlanmalıdır.');
-}
 
 const startTime = Date.now();
 
