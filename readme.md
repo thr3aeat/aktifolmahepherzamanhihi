@@ -1,59 +1,28 @@
-# 🚀 Discord User Token 7/24 Aktif Tutma Projesi (Render Uyumlu)
+# 🚀 Eko Yıldız - Discord User Token 7/24 Aktif Tutma Projesi
 
-Bu proje, Discord hesabınızı (User Token) **Render.com** üzerinde 7/24 kesintisiz online (açık) tutmak için geliştirilmiştir.
-
----
-
-## 📌 Özellikler
-- 🔑 **Tek Değişken:** `.env` dosyasında sadece `TOKEN` olması yeterlidir.
-- 🔄 **Otomatik Yeniden Bağlanma (Auto Reconnect):** Sunucu kopmalarında otomatik tekrar bağlanır.
-- 🌐 **Express HTTP Sunucusu:** Render.com'un Web Service olarak 7/24 çalıştırması için dahili port açar.
-- ⚡ **Self-Ping Mekanizması:** Render'ın ücretsiz planındaki 15 dakikalık uyku modunu engeller.
+Bu proje, Discord hesabınızı (User Token) **Render.com** üzerinde 7/24 kesintisiz online tutar, hesabınızda **"Eko Yıldız youtube kanalına abone ol!"** mor yayın (Streaming) etkinliğini gösterir ve şık bir web dashboard sunar.
 
 ---
 
-## 🛠️ Render.com Kurulumu
-
-### 1️⃣ Projeyi GitHub'a Yükleyin
-Bu projedeki dosyaları kendi GitHub hesabınızda yeni bir repository'e yükleyin.
-
-### 2️⃣ Render.com'da Web Service Oluşturun
-1. [Render Dashboard](https://dashboard.render.com/)'a girin.
-2. **New +** -> **Web Service** seçin ve GitHub deponuzu bağlayın.
-3. Ayarlar:
-   - **Name:** `user-token-724`
-   - **Environment:** `Node`
-   - **Build Command:** `npm install`
-   - **Start Command:** `npm start`
-   - **Instance Type:** `Free`
-
-### 3️⃣ Environment Variable (Çevre Değişkeni) Ekleyin
-Render sayfasındaki **Environment** sekmesine sadece şunu ekleyin:
-
-| Key | Value |
-| :--- | :--- |
-| `TOKEN` | Discord Kullanıcı Tokeniniz |
+## 🌟 Öne Çıkan Gelişmiş Özellikler
+- 📺 **Özel Etkinlik:** Profilinizde **"Eko Yıldız youtube kanalına abone ol!"** mor yayın rozeti gözükür.
+- 🎨 **Şok Edici Web Dashboard:** Web sitenize girildiğinde cam efektli (Glassmorphic), canlı Uptime ve profil detayları gösteren ultra modern arayüz.
+- ⏰ **CronJob Desteği:** CronJob servisleriniz için özel hazırlanmış hafif `/ping` ve `/health` endpoint'leri.
+- 🛡️ **Anti-Crash Koruması:** `uncaughtException` ve `unhandledRejection` ile sunucunuz asla kapanmaz.
+- ⚡ **Self-Ping Mekanizması:** Render Free Tier uykusunu otomatik engeller.
 
 ---
 
-## ⏰ 7/24 Kesintisiz Açık Tutma (UptimeRobot)
+## 🛠️ CronJob Bağlantı Adresleri (Cron-Job.org / UptimeRobot)
+CronJob bağlarken şu adreslerden birini kullanabilirsiniz (Örnek: 5 dakikada bir istek):
 
-Render ücretsiz Web Service'leri istek almazsa 15 dakikada uyur. Tam 7/24 açık tutmak için:
-
-1. [UptimeRobot.com](https://uptimerobot.com/)'a ücretsiz kaydolun.
-2. **Add New Monitor** -> **HTTP(s)** seçin.
-3. **URL / IP:** Render'ın size verdiği URL'yi yazın (örn: `https://user-token-724.onrender.com`).
-4. Monitoring Interval: `5 minutes` olarak ayarlayın.
+- **Ping Endpoint (Hızlı):** `https://user-token-724.onrender.com/ping` (Dönen cevap: `pong`)
+- **Health JSON Endpoint:** `https://user-token-724.onrender.com/health`
+- **Ana Dashboard:** `https://user-token-724.onrender.com/`
 
 ---
 
-## 💻 Yerel (Local) Kullanım
-1. `.env` dosyası oluşturun ve sadece tokeninizi yazın:
-```env
-TOKEN=sizin_discord_tokeniniz
-```
-2. Başlatın:
-```bash
-npm install
-npm start
-```
+## 💻 Kurulum ve Render Kullanımı
+1. Projede `.env` veya Render Environment Variables kısmına **sadece `TOKEN`** yazın.
+2. Render Build Command: `npm install`
+3. Render Start Command: `npm start`
