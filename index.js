@@ -2,43 +2,95 @@ require('dotenv').config();
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
-const { Client } = require('discord.js-selfbot-v13');
 const axios = require('axios');
 
-// Express Server
-const app = express();
+// User Token Client (discord.js-selfbot-v13)
+const { Client: UserClient } = require('discord.js-selfbot-v13');
+
+// Bot Token Client (discord.js v14)
+const {
+  Client: BotClient,
+  GatewayIntentBits,
+  Partials,
+  ChannelType,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  EmbedBuilder
+} = require('discord.js');
+
+// -------------------------------------------------------------
+// KONFİGÜRASYON & DEĞİŞKENLER
+// -------------------------------------------------------------
 const PORT = process.env.PORT || 3000;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const EKO_USER_ID = process.env.EKO_USER_ID || '1031620522406072350';
+const USER_TOKEN = process.env.TOKEN || process.env.USER_TOKEN;
+const BOT_TOKEN = process.env.BOTTOKEN || process.env.BOT_TOKEN;
+
+if (!GROQ_API_KEY) {
+  console.log('[BILGI] GROQ_API_KEY .env içinde tanımlanmalıdır.');
+}
+
+
 const startTime = Date.now();
 
-// Render / Reverse Proxy IP Güvenlik Yapılandırması
+// Hafıza & Durum Yönetimi (State Management)
+const aiHistories = new Map(); // userId -> Array<{ role, content }>
+let reservationQueue = []; // Array<{ id, userId, username, topic, timestamp, status }>
+let activeChat = null; // null veya { userId, username, topic, startedAt }
+const blacklist = new Set(); // Karaliste User ID'leri
+let activeChatTimeout = null; // 10 Dakika Otomatik Zaman Aşımı Takibi
+
+const stats = {
+  aiInteractions: 0,
+  reservationsCreated: 0,
+  messagesBridged: 0
+};
+
+// -------------------------------------------------------------
+// ZAMAN AŞIMI (AUTO-TIMEOUT) FONKSİYONLARI
+// -------------------------------------------------------------
+function resetActiveChatTimeout() {
+  if (activeChatTimeout) clearTimeout(activeChatTimeout);
+  
+  // 10 dakika (600.000 ms) boyunca eylem olmazsa sohbeti otomatik kapatır
+  activeChatTimeout = setTimeout(async () => {
+    if (activeChat) {
+      console.log(`[ZAMAN AŞIMI] ${activeChat.username} ile sohbet 10 dakika inaktiflik nedeniyle kapatıldı.`);
+      await endActiveChat('10 dakika boyunca eylem yapılmadığı için sohbet otomatik sonlandırıldı.');
+    }
+  }, 10 * 60 * 1000);
+}
+
+function stopActiveChatTimeout() {
+  if (activeChatTimeout) {
+    clearTimeout(activeChatTimeout);
+    activeChatTimeout = null;
+  }
+}
+
+// -------------------------------------------------------------
+// EXPRESS SERVER & ANTI-DDOS DASHBOARD
+// -------------------------------------------------------------
+const app = express();
 app.set('trust proxy', 1);
 
-// -------------------------------------------------------------
-// ANTI-DDOS VE GÜVENLİK MIDDLEWARE'LERİ
-// -------------------------------------------------------------
-// 1. Helmet Güvenlik Başlıkları (XSS, MIME Sniffing, Frameguard koruması)
-app.use(helmet({
-  contentSecurityPolicy: false // inline scriptler için devrede
-}));
-
-// 2. İstek Boyutu Sınırlaması (Payload Flooding DDoS koruması)
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
-// 3. Genel Rate Limiting (Dakikada maks 60 istek - DDoS Saldırı Engelleyici)
 const globalLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 Dakika
-  max: 60, // Her IP için maksimum 60 istek
+  windowMs: 1 * 60 * 1000,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    status: 429,
-    error: 'Çok fazla istek gönderildi! Anti-DDoS koruması devrede. Lütfen 1 dakika bekleyin.'
-  }
+  message: { status: 429, error: 'Çok fazla istek! Anti-DDoS koruması devrede.' }
 });
 app.use(globalLimiter);
 
-// 4. CronJob & Ping Endpoint'leri için Özel Esnek Limiter (Dakikada maks 120 istek)
 const cronPingLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 120,
@@ -47,9 +99,85 @@ const cronPingLimiter = rateLimit({
 });
 
 // -------------------------------------------------------------
-// DISCORD SELFBOT CLIENT - (ANTI-DETECTION HEADER & GATEWAY CONFIG)
+// GROQ AI SERVICE (llama-3.3-70b-versatile)
 // -------------------------------------------------------------
-const client = new Client({
+async function queryGroqAI(userId, username, userMessage) {
+  if (!aiHistories.has(userId)) {
+    aiHistories.set(userId, []);
+  }
+
+  const history = aiHistories.get(userId);
+
+  const systemPrompt = `Sen EkoYıldız'ın (Eko) kişisel rezervasyon yapay zeka asistanısın.
+Görevin: Eko ile konuşmak isteyen kullanıcıları karşılamak, onlara nazik, samimi ve yardımsever davranmaktır.
+
+İLK KARŞILAMA / İLK MESAJ KURALI:
+Kullanıcıya yapacağın ilk açıklamada tam olarak şu cümleyi kullan veya dahil et:
+"Merhaba! EkoYıldız ın yani ekonun kişisel hehsap dm sine hoşgeldiniz bu hesap eko ile konuşmak için rezervasyon almak için kurulmuştur"
+
+ÇALIŞMA MANTIĞI:
+1. Kullanıcıya ne hakkında görüşmek istediğini (konuyu / nedenini) ve ismini nazikçe sor.
+2. Kullanıcı konuyu/nedenini açıkladığında veya Eko ile konuşmak istediğini teyit ettiğinde Eko'ya rezervasyon talebi oluşturacağını söyle.
+3. Rezervasyon talebi kesinleştiğinde yanıtının EN SONUNA tam olarak şu formatta etiket ekle:
+[RESERVATION:<konu_ozeti>]
+Örnek: "Talebinizi aldım! Eko'ya iletiyorum. [RESERVATION:YouTube videosu iş birliği hakkında görüşme]"
+Eğer kullanıcı henüz konu belirtmediyse rezervasyon etiketi koyma, sohbeti sürdür.`;
+
+  history.push({ role: 'user', content: userMessage });
+
+  if (history.length > 10) {
+    history.splice(0, history.length - 10);
+  }
+
+  const messagesPayload = [
+    { role: 'system', content: systemPrompt },
+    ...history
+  ];
+
+  try {
+    const response = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: 'llama-3.3-70b-versatile',
+        messages: messagesPayload,
+        temperature: 0.7,
+        max_tokens: 500
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+
+    const aiReply = response.data?.choices?.[0]?.message?.content || "Üzgünüm, şu anda yanıt veremiyorum.";
+    history.push({ role: 'assistant', content: aiReply });
+    stats.aiInteractions++;
+
+    let reservationTopic = null;
+    const resMatch = aiReply.match(/\[RESERVATION:(.*?)\]/);
+    if (resMatch) {
+      reservationTopic = resMatch[1].trim();
+    }
+
+    const cleanReply = aiReply.replace(/\[RESERVATION:.*?\]/g, '').trim();
+
+    return { reply: cleanReply, reservationTopic };
+  } catch (err) {
+    console.error('[GROQ AI HATA]', err?.response?.data || err.message);
+    return {
+      reply: "Merhaba! EkoYıldız ın yani ekonun kişisel hehsap dm sine hoşgeldiniz bu hesap eko ile konuşmak için rezervasyon almak için kurulmuştur. Şu anda sistem biraz yoğun, lütfen konuşmak istediğiniz konuyu yazın, Eko'ya ileteyim!",
+      reservationTopic: null
+    };
+  }
+}
+
+// -------------------------------------------------------------
+// DISCORD SELFBOT CLIENT (USER TOKEN - 7/24 AKTİF HESAP)
+// -------------------------------------------------------------
+const userClient = new UserClient({
   checkUpdate: false,
   ws: {
     properties: {
@@ -63,68 +191,573 @@ const client = new Client({
   }
 });
 
-// Anti-Detection İnsan Taklidi Değişkenleri
-let currentMode = 'ONLINE'; 
-let lastStatusChange = new Date();
-
-// Gece Saatlerinde Sleep/Idle Simülasyonu (01:00 - 08:00 arası Türkiye Saati / UTC+3)
-function getSimulatedHumanStatus() {
-  const date = new Date();
-  const trtHour = (date.getUTCHours() + 3) % 24;
-
-  if (trtHour >= 1 && trtHour < 8) {
-    currentMode = 'IDLE_SLEEP (Gece İnsan Uykusu Taklidi)';
-    return {
-      status: 'idle',
-      activityName: 'Eko Yıldız youtube kanalına abone ol!',
-      activityType: 'STREAMING'
-    };
-  }
-
-  const isMicroBreak = Math.random() < 0.10;
-  if (isMicroBreak) {
-    currentMode = 'MICRO_BREAK (Mola Simülasyonu)';
-    return {
-      status: 'idle',
-      activityName: 'Eko Yıldız youtube kanalına abone ol!',
-      activityType: 'STREAMING'
-    };
-  }
-
-  currentMode = 'ONLINE (Çevrim içi İnsan Taklidi)';
-  return {
-    status: 'online',
-    activityName: 'Eko Yıldız youtube kanalına abone ol!',
-    activityType: 'STREAMING'
-  };
-}
+let currentHumanMode = 'ONLINE (İnsan Taklidi Aktif)';
 
 function updatePresenceHumanSimulated() {
-  if (!client.user) return;
+  if (!userClient.user) return;
   try {
-    const sim = getSimulatedHumanStatus();
-    client.user.setPresence({
-      status: sim.status,
+    const date = new Date();
+    const trtHour = (date.getUTCHours() + 3) % 24;
+    let status = 'online';
+
+    if (trtHour >= 1 && trtHour < 8) {
+      status = 'idle';
+      currentHumanMode = 'IDLE_SLEEP (Gece İnsan Uykusu Modu)';
+    } else {
+      status = 'online';
+      currentHumanMode = 'ONLINE (Çevrim içi İnsan Taklidi)';
+    }
+
+    userClient.user.setPresence({
+      status: status,
       activities: [{
-        name: sim.activityName,
-        type: sim.activityType,
+        name: 'Eko Yıldız youtube kanalına abone ol!',
+        type: 'STREAMING',
         url: 'https://www.twitch.tv/discord'
       }]
     });
-    lastStatusChange = new Date();
-    console.log(`[ANTI-BAN PRESENCE] Mod: ${currentMode} | Durum: ${sim.status} | Etkinlik: "${sim.activityName}"`);
   } catch (err) {
-    console.error(`[PRESENCE HATA]`, err.message);
+    console.error('[USER PRESENCE HATA]', err.message);
+  }
+}
+
+userClient.on('ready', () => {
+  console.log(`====================================================`);
+  console.log(`[USER TOKEN AKTİF] Giriş Yapıldı: ${userClient.user.tag}`);
+  console.log(`[ANTI-DETECTION] Windows Client Taklidi Aktif.`);
+  console.log(`====================================================`);
+  updatePresenceHumanSimulated();
+  setInterval(updatePresenceHumanSimulated, 15 * 60 * 1000);
+});
+
+userClient.on('error', (err) => console.error('[USER CLIENT HATA]', err.message));
+
+// -------------------------------------------------------------
+// DISCORD BOT CLIENT (BOT TOKEN - İNTERAKTİF SİSTEM)
+// -------------------------------------------------------------
+const botClient = new BotClient({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.MessageContent
+  ],
+  partials: [Partials.Channel, Partials.Message]
+});
+
+// -------------------------------------------------------------
+// REZERVASYON VE CANLI SOHBET YÖNETİMİ
+// -------------------------------------------------------------
+
+// Mesaj İletim Yardımcısı (Attachments & Replies)
+async function relayMessage(destinationChannelOrUser, msg, headerPrefix = '') {
+  try {
+    const options = { content: '' };
+    let text = msg.content || '';
+
+    if (headerPrefix) {
+      options.content = `${headerPrefix}\n${text}`;
+    } else {
+      options.content = text;
+    }
+
+    if (msg.attachments && msg.attachments.size > 0) {
+      options.files = msg.attachments.map(att => att.url);
+    }
+
+    if (msg.reference && msg.reference.messageId) {
+      try {
+        const refMsg = await msg.channel.messages.fetch(msg.reference.messageId);
+        if (refMsg) {
+          options.content = `> 💬 **[Yanıtlanan Mesaj - ${refMsg.author.username}]:** ${refMsg.content || '(Medya/Dosya)'}\n` + options.content;
+        }
+      } catch (e) {}
+    }
+
+    if (!options.content && (!options.files || options.files.length === 0)) {
+      return;
+    }
+
+    await destinationChannelOrUser.send(options);
+    stats.messagesBridged++;
+    
+    // Mesaj iletildiğinde 10 dakikalık auto-timeout sayacını sıfırla
+    resetActiveChatTimeout();
+  } catch (err) {
+    console.error('[MESAJ İLETİM HATASI]', err.message);
+  }
+}
+
+async function sendUserTokenDM(targetUserId, messageText) {
+  try {
+    if (!userClient.user) return false;
+    const targetUser = await userClient.users.fetch(targetUserId);
+    if (targetUser) {
+      await targetUser.send(messageText);
+      return true;
+    }
+  } catch (err) {
+    console.error('[USER TOKEN DM HATA]', err.message);
+  }
+  return false;
+}
+
+async function promptEkoQueue() {
+  try {
+    const ekoUser = await botClient.users.fetch(EKO_USER_ID);
+    if (!ekoUser) {
+      console.error('[HATA] Eko kullanıcısı bulunamadı (ID: ' + EKO_USER_ID + ')');
+      return;
+    }
+
+    if (activeChat) {
+      console.log(`[KUYRUK BILGI] Eko şu an ${activeChat.username} ile konuşuyor. Sıradaki bekleyen sayısı: ${reservationQueue.length}`);
+      return;
+    }
+
+    const pending = reservationQueue.filter(q => q.status === 'pending');
+    if (pending.length === 0) return;
+
+    if (pending.length === 1) {
+      const item = pending[0];
+      const embed = new EmbedBuilder()
+        .setTitle('📅 Yeni Rezervasyon Talebi!')
+        .setDescription(`Merhaba Eko!\n\n👤 **Kullanıcı:** ${item.username} (\`${item.userId}\`)\n📌 **Görüşme Konusu:** ${item.topic}\n⏰ **Talep Zamanı:** <t:${Math.floor(item.timestamp / 1000)}:R>`)
+        .setColor(0x8b5cf6)
+        .setFooter({ text: 'EkoYıldız Rezervasyon Botu' });
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`accept_${item.userId}`)
+          .setLabel('✅ Evet (Kabul Et)')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`reject_${item.userId}`)
+          .setLabel('❌ Hayır (Reddet)')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+      await ekoUser.send({ embeds: [embed], components: [row] });
+    } else {
+      const embed = new EmbedBuilder()
+        .setTitle('📋 Birden Fazla Rezervasyon Talebi Var!')
+        .setDescription(`Merhaba Eko! Sırasıyla **${pending.length} kişi** sizinle konuşmak istiyor:\n\n` +
+          pending.map((p, idx) => `**${idx + 1}.** ${p.username} - *${p.topic.substring(0, 40)}*`).join('\n') +
+          `\n\nHangi kullanıcı ile **ilk önce** konuşmak istersiniz? Aşağıdaki menüden seçiniz:`)
+        .setColor(0x3b82f6);
+
+      const selectOptions = pending.slice(0, 25).map(p => 
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`${p.username}`.substring(0, 25))
+          .setDescription(`${p.topic}`.substring(0, 50))
+          .setValue(`select_user_${p.userId}`)
+      );
+
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('eko_select_reservation')
+        .setPlaceholder('Konuşmak istediğiniz kişiyi seçin...')
+        .addOptions(selectOptions);
+
+      const row = new ActionRowBuilder().addComponents(selectMenu);
+      await ekoUser.send({ embeds: [embed], components: [row] });
+    }
+  } catch (err) {
+    console.error('[PROMPT EKO QUEUE HATA]', err.message);
   }
 }
 
 // -------------------------------------------------------------
-// ŞOK EDİCİ GÖRSEL DASHBOARD (GET /)
+// DISCORD BOT EVENT DİNLEYİCİLERİ
+// -------------------------------------------------------------
+botClient.on('ready', () => {
+  console.log(`====================================================`);
+  console.log(`[BOT TOKEN AKTİF] Giriş Yapıldı: ${botClient.user.tag}`);
+  console.log(`[REZERVASYON BOTU] Groq AI & Canlı Sohbet Köprüsü Aktif.`);
+  console.log(`====================================================`);
+});
+
+botClient.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+  if (message.channel.type !== ChannelType.DM) return;
+
+  const senderId = message.author.id;
+  const senderTag = message.author.tag || message.author.username;
+
+  // -------------------------------------------------------------
+  // 0. KARALİSTE (BLACKLIST) KONTROLÜ
+  // -------------------------------------------------------------
+  if (blacklist.has(senderId)) return;
+
+  // -------------------------------------------------------------
+  // 1. KULLANICI AI HAFIZA SIFIRLAMA KOMUTU (!sıfırla / !temizle)
+  // -------------------------------------------------------------
+  if (message.content.trim() === '!sıfırla' || message.content.trim() === '!temizle') {
+    aiHistories.delete(senderId);
+    await message.reply("🧹 Yapay zeka hafızanız sıfırlandı. Yeni bir konu hakkında konuşabilirsiniz.");
+    return;
+  }
+
+  // -------------------------------------------------------------
+  // 2. AKTİF CANLI SOHBET VAR MI?
+  // -------------------------------------------------------------
+  if (activeChat) {
+    if (senderId === activeChat.userId) {
+      try {
+        const ekoUser = await botClient.users.fetch(EKO_USER_ID);
+        const header = `💬 **[${senderTag}]:**`;
+        await relayMessage(ekoUser, message, header);
+      } catch (err) {
+        console.error('[EKOYA İLETİM HATA]', err.message);
+      }
+      return;
+    }
+
+    if (senderId === EKO_USER_ID) {
+      if (message.content.trim().toLowerCase() === '!bitir') {
+        await endActiveChat('Eko konuşmayı sonlandırdı.');
+        return;
+      }
+
+      try {
+        const targetUser = await botClient.users.fetch(activeChat.userId);
+        const header = `👤 **[Eko]:**`;
+        await relayMessage(targetUser, message, header);
+      } catch (err) {
+        console.error('[KULLANICIYA İLETİM HATA]', err.message);
+      }
+      return;
+    }
+  }
+
+  // -------------------------------------------------------------
+  // 3. EKO ADMİN DM KOMUTLARI
+  // -------------------------------------------------------------
+  if (senderId === EKO_USER_ID) {
+    const cmd = message.content.trim();
+
+    // !ban <userId>
+    if (cmd.startsWith('!ban ')) {
+      const targetId = cmd.split(' ')[1]?.trim();
+      if (targetId) {
+        blacklist.add(targetId);
+        await message.reply(`🚫 \`${targetId}\` ID'li kullanıcı karalisteye alındı.`);
+      } else {
+        await message.reply('⚠️ Kullanım: `!ban <Kullanıcı_ID>`');
+      }
+      return;
+    }
+
+    // !unban <userId>
+    if (cmd.startsWith('!unban ')) {
+      const targetId = cmd.split(' ')[1]?.trim();
+      if (targetId) {
+        blacklist.delete(targetId);
+        await message.reply(`✅ \`${targetId}\` ID'li kullanıcının engeli kaldırıldı.`);
+      } else {
+        await message.reply('⚠️ Kullanım: `!unban <Kullanıcı_ID>`');
+      }
+      return;
+    }
+
+    // !temizlekuyruk
+    if (cmd === '!temizlekuyruk') {
+      reservationQueue = [];
+      await message.reply('🧹 Bekleyen tüm rezervasyon kuyruğu temizlendi.');
+      return;
+    }
+
+    // !istatistik
+    if (cmd === '!istatistik') {
+      const memUsage = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
+      const uptimeSec = Math.floor(process.uptime());
+      const hours = Math.floor(uptimeSec / 3600);
+      const mins = Math.floor((uptimeSec % 3600) / 60);
+
+      const embed = new EmbedBuilder()
+        .setTitle('📊 EkoYıldız Sistem İstatistikleri')
+        .setColor(0x8b5cf6)
+        .addFields(
+          { name: '⏱ Uptime', value: `${hours}s ${mins}d`, inline: true },
+          { name: '💾 RAM Kullanımı', value: `${memUsage} MB`, inline: true },
+          { name: '📋 Bekleyen Kuyruk', value: `${reservationQueue.filter(q => q.status === 'pending').length} kişi`, inline: true },
+          { name: '🟢 Aktif Sohbet', value: activeChat ? activeChat.username : 'Yok', inline: true },
+          { name: '🤖 AI Etkileşimi', value: `${stats.aiInteractions}`, inline: true },
+          { name: '💬 İletilen Mesaj', value: `${stats.messagesBridged}`, inline: true },
+          { name: '🚫 Karaliste Sayısı', value: `${blacklist.size} kişi`, inline: true }
+        );
+
+      await message.reply({ embeds: [embed] });
+      return;
+    }
+
+    // !kuyruk
+    if (cmd === '!kuyruk') {
+      const pending = reservationQueue.filter(q => q.status === 'pending');
+      await message.reply(`📋 Bekleyen rezervasyon sayısı: **${pending.length}**`);
+      if (pending.length > 0) {
+        await promptEkoQueue();
+      }
+      return;
+    }
+  }
+
+  // -------------------------------------------------------------
+  // 4. KULLANICI KUYRUKTA ZATEN BEKLİYOR MU?
+  // -------------------------------------------------------------
+  const existingPending = reservationQueue.find(q => q.userId === senderId && q.status === 'pending');
+  if (existingPending) {
+    const cancelRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`cancel_res_${senderId}`)
+        .setLabel('❌ Rezervasyonumu İptal Et')
+        .setStyle(ButtonStyle.Secondary)
+    );
+    await message.reply({
+      content: "⏳ Rezervasyon talebiniz zaten alındı ve Eko'ya iletildi. Eko uygun olduğunda sizinle iletişime geçecektir. İptal etmek isterseniz aşağıdaki butona tıklayın:",
+      components: [cancelRow]
+    });
+    return;
+  }
+
+  // -------------------------------------------------------------
+  // 5. YENİ KULLANICI - GROQ AI İLE YANITLA
+  // -------------------------------------------------------------
+  const aiResult = await queryGroqAI(senderId, senderTag, message.content);
+
+  // Rezervasyon tespit edildiyse iptal butonu ile birlikte yanıt ver
+  if (aiResult.reservationTopic) {
+    const newReservation = {
+      id: `res_${Date.now()}`,
+      userId: senderId,
+      username: senderTag,
+      topic: aiResult.reservationTopic,
+      timestamp: Date.now(),
+      status: 'pending'
+    };
+
+    reservationQueue.push(newReservation);
+    stats.reservationsCreated++;
+
+    console.log(`[REZERVASYON OLUŞTU] Kullanıcı: ${senderTag} | Konu: ${aiResult.reservationTopic}`);
+
+    const cancelRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`cancel_res_${senderId}`)
+        .setLabel('❌ Rezervasyonumu İptal Et')
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+    await message.reply({
+      content: aiResult.reply || "Talebiniz Eko'ya iletildi!",
+      components: [cancelRow]
+    });
+
+    await promptEkoQueue();
+  } else {
+    if (aiResult.reply) {
+      await message.reply(aiResult.reply);
+    }
+  }
+});
+
+async function endActiveChat(reason = 'Konuşma sonlandırıldı.') {
+  if (!activeChat) return;
+
+  stopActiveChatTimeout();
+
+  const endedUser = activeChat;
+  activeChat = null;
+
+  try {
+    const userObj = await botClient.users.fetch(endedUser.userId);
+    if (userObj) {
+      await userObj.send(`🔒 **Eko ile konuşmanız sonlandırıldı.**\n*Nedeni:* ${reason}\nZaman ayırdığınız için teşekkür ederiz!`);
+    }
+  } catch (e) {
+    await sendUserTokenDM(endedUser.userId, `🔒 Eko sizinle olan konuşmayı sonlandırdı. (${reason})`);
+  }
+
+  try {
+    const ekoUser = await botClient.users.fetch(EKO_USER_ID);
+    if (ekoUser) {
+      await ekoUser.send(`🔴 **${endedUser.username}** ile olan canlı sohbet sonlandırıldı. (${reason})`);
+    }
+  } catch (e) {}
+
+  const pending = reservationQueue.filter(q => q.status === 'pending');
+  if (pending.length > 0) {
+    try {
+      const ekoUser = await botClient.users.fetch(EKO_USER_ID);
+      await ekoUser.send(`ℹ️ Konuşma bitti. Sıradaki bekleyen kişi sayısı: **${pending.length}**.`);
+      await promptEkoQueue();
+    } catch (e) {}
+  }
+}
+
+botClient.on('interactionCreate', async (interaction) => {
+  if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
+
+  const customId = interaction.customId;
+
+  // -------------------------------------------------------------
+  // KULLANICI KENDİ REZERVASYONUNU İPTAL ETME BUTONU
+  // -------------------------------------------------------------
+  if (customId.startsWith('cancel_res_')) {
+    const targetUserId = customId.replace('cancel_res_', '');
+    
+    if (interaction.user.id !== targetUserId) {
+      await interaction.reply({ content: '❌ Sadece kendi rezervasyon talebinizi iptal edebilirsiniz.', ephemeral: true });
+      return;
+    }
+
+    reservationQueue = reservationQueue.filter(q => q.userId !== targetUserId);
+    aiHistories.delete(targetUserId);
+
+    await interaction.update({
+      content: '✅ Rezervasyon talebiniz başarıyla iptal edildi. İstediniz zaman tekrar yazabilirsiniz.',
+      components: [],
+      embeds: []
+    });
+    return;
+  }
+
+  // -------------------------------------------------------------
+  // TAMAM BUTONU (Sırada Bekleyen Kullanıcı Tıkladığında)
+  // -------------------------------------------------------------
+  if (customId.startsWith('ack_wait_')) {
+    await interaction.reply({
+      content: '👍 Harika! Eko şu anki görüşmesini bitirince sıranız gelecektir. Lütfen hazırda bekleyin.',
+      ephemeral: true
+    });
+    return;
+  }
+
+  // Sadece Eko'nun buton yetkisi vardır
+  if (interaction.user.id !== EKO_USER_ID) {
+    await interaction.reply({ content: '❌ Bu işlemi gerçekleştirmeye yetkiniz yok.', ephemeral: true });
+    return;
+  }
+
+  if (customId.startsWith('end_chat_')) {
+    await interaction.reply({ content: '🔴 Canlı sohbet sonlandırılıyor...', ephemeral: true });
+    await endActiveChat('Eko butona basarak konuşmayı sonlandırdı.');
+    return;
+  }
+
+  if (customId.startsWith('accept_')) {
+    const selectedUserId = customId.replace('accept_', '');
+    await startChatWithUser(interaction, selectedUserId);
+    return;
+  }
+
+  if (customId.startsWith('reject_')) {
+    const selectedUserId = customId.replace('reject_', '');
+    
+    reservationQueue = reservationQueue.filter(q => q.userId !== selectedUserId);
+
+    await interaction.update({
+      content: `❌ Rezervasyon talebi reddedildi (User ID: \`${selectedUserId}\`).`,
+      embeds: [],
+      components: []
+    });
+
+    try {
+      const rejectedUser = await botClient.users.fetch(selectedUserId);
+      if (rejectedUser) {
+        await rejectedUser.send("Eko sizinle konuşmayı reddeti.");
+      }
+    } catch (e) {
+      await sendUserTokenDM(selectedUserId, "Eko sizinle konuşmayı reddeti.");
+    }
+
+    await promptEkoQueue();
+    return;
+  }
+
+  if (customId === 'eko_select_reservation') {
+    const selectedValue = interaction.values[0];
+    const selectedUserId = selectedValue.replace('select_user_', '');
+    await startChatWithUser(interaction, selectedUserId);
+    return;
+  }
+});
+
+async function startChatWithUser(interaction, targetUserId) {
+  const targetItem = reservationQueue.find(q => q.userId === targetUserId && q.status === 'pending');
+  
+  if (!targetItem) {
+    await interaction.reply({ content: '⚠️ Bu rezervasyon talebi bulunamadı veya iptal edildi.', ephemeral: true });
+    return;
+  }
+
+  activeChat = {
+    userId: targetItem.userId,
+    username: targetItem.username,
+    topic: targetItem.topic,
+    startedAt: Date.now()
+  };
+
+  reservationQueue = reservationQueue.filter(q => q.userId !== targetUserId);
+
+  // 10 dakikalık auto-timeout başlat
+  resetActiveChatTimeout();
+
+  const endRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`end_chat_${targetItem.userId}`)
+      .setLabel('🔴 Konuşmayı Bitir')
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  const activeEmbed = new EmbedBuilder()
+    .setTitle('🟢 Canlı Sohbet Başlatıldı!')
+    .setDescription(`👤 **Görüşülen Kullanıcı:** ${targetItem.username} (\`${targetItem.userId}\`)\n📌 **Konu:** ${targetItem.topic}\n⏱ **Zaman Aşımı:** 10 Dakika inaktiflik durumunda sohbet otomatik kapanır.\n\n*Artık bu kanala yazacağınız her mesaj doğrudan kullanıcıya iletilecektir.*`)
+    .setColor(0x10b981);
+
+  if (interaction.isButton() || interaction.isStringSelectMenu()) {
+    await interaction.update({
+      content: `✅ **${targetItem.username}** ile konuşma kabul edildi!`,
+      embeds: [activeEmbed],
+      components: [endRow]
+    });
+  }
+
+  const remainingPending = reservationQueue.filter(q => q.status === 'pending');
+  for (const pendingUser of remainingPending) {
+    try {
+      const uObj = await botClient.users.fetch(pendingUser.userId);
+      if (uObj) {
+        const waitRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`ack_wait_${pendingUser.userId}`)
+            .setLabel('TAMAM')
+            .setStyle(ButtonStyle.Primary)
+        );
+        await uObj.send({
+          content: "Eko aktif oldu. Şuanda birisiyle konuşma sağlıyor. Sizinle birazdan konuşacak hazırlanınız.",
+          components: [waitRow]
+        });
+      }
+    } catch (e) {}
+  }
+
+  try {
+    const activeUserObj = await botClient.users.fetch(targetItem.userId);
+    if (activeUserObj) {
+      await activeUserObj.send(`🎉 **Eko görüşme talebinizi kabul etti!**\nŞu andan itibaren yazacağınız mesajlar doğrudan Eko'ya iletilecektir. Konuşabilirsiniz!`);
+    }
+  } catch (e) {}
+}
+
+// -------------------------------------------------------------
+// WEB DASHBOARD VE KONTROL PANELİ
 // -------------------------------------------------------------
 app.get('/', (req, res) => {
-  const userTag = client.user ? client.user.tag : 'Bağlanıyor...';
-  const avatarUrl = client.user ? client.user.displayAvatarURL({ dynamic: true }) : 'https://cdn.discordapp.com/embed/avatars/0.png';
-  const status = client.user ? 'ONLINE' : 'CONNECTING';
+  const userTag = userClient.user ? userClient.user.tag : 'Bağlanıyor...';
+  const botTag = botClient.user ? botClient.user.tag : 'Bağlanıyor...';
+  const avatarUrl = userClient.user ? userClient.user.displayAvatarURL({ dynamic: true }) : 'https://cdn.discordapp.com/embed/avatars/0.png';
+  
+  const pendingCount = reservationQueue.filter(q => q.status === 'pending').length;
+  const activeName = activeChat ? activeChat.username : 'Yok (Boşta)';
 
   const html = `
 <!DOCTYPE html>
@@ -132,7 +765,7 @@ app.get('/', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Eko Yıldız | 7/24 Anti-DDoS & Anti-Detection Token</title>
+  <title>Eko Yıldız | 7/24 Groq AI & Canlı Sohbet Sistemi</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;900&display=swap" rel="stylesheet">
@@ -170,23 +803,17 @@ app.get('/', (req, res) => {
       position: relative;
       z-index: 10;
       width: 90%;
-      max-width: 680px;
-      background: rgba(15, 23, 42, 0.75);
+      max-width: 720px;
+      background: rgba(15, 23, 42, 0.8);
       backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 28px;
-      padding: 40px 32px;
+      padding: 36px 30px;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 40px rgba(124, 58, 237, 0.25);
       text-align: center;
-      animation: fadeIn 0.8s ease-out;
-    }
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(20px); }
-      to { opacity: 1; transform: translateY(0); }
     }
 
-    .profile-section {
+    .header-section {
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -194,9 +821,9 @@ app.get('/', (req, res) => {
     }
     .avatar-wrapper {
       position: relative;
-      width: 96px;
-      height: 96px;
-      margin-bottom: 12px;
+      width: 90px;
+      height: 90px;
+      margin-bottom: 10px;
     }
     .avatar {
       width: 100%;
@@ -210,26 +837,20 @@ app.get('/', (req, res) => {
       position: absolute;
       bottom: 4px;
       right: 4px;
-      width: 22px;
-      height: 22px;
+      width: 20px;
+      height: 20px;
       border-radius: 50%;
       background-color: #10b981;
       border: 3px solid #0f172a;
       box-shadow: 0 0 12px #10b981;
-      animation: statusGlow 2s infinite;
-    }
-    @keyframes statusGlow {
-      0%, 100% { box-shadow: 0 0 8px #10b981; }
-      50% { box-shadow: 0 0 20px #10b981; }
     }
 
-    .username {
-      font-size: 26px;
+    .title {
+      font-size: 24px;
       font-weight: 700;
-      color: #ffffff;
       margin-bottom: 4px;
     }
-    .user-tag {
+    .subtitle {
       font-size: 13px;
       color: #94a3b8;
       background: rgba(255, 255, 255, 0.05);
@@ -238,153 +859,55 @@ app.get('/', (req, res) => {
       border: 1px solid rgba(255, 255, 255, 0.08);
     }
 
-    /* Shields Grid */
     .shields-wrapper {
       display: flex;
       justify-content: center;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
-      margin: 15px 0 18px 0;
+      margin: 15px 0;
     }
     .shield-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      font-weight: 700;
-      padding: 6px 14px;
-      border-radius: 30px;
-    }
-    .shield-ddos {
-      background: rgba(59, 130, 246, 0.15);
-      border: 1px solid rgba(59, 130, 246, 0.35);
-      color: #60a5fa;
-    }
-    .shield-antiban {
-      background: rgba(16, 185, 129, 0.15);
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      color: #34d399;
-    }
-
-    /* Banner */
-    .banner {
-      background: linear-gradient(135deg, rgba(124, 58, 237, 0.2), rgba(219, 39, 119, 0.2));
-      border: 1px solid rgba(236, 72, 153, 0.3);
-      border-radius: 18px;
-      padding: 16px 20px;
-      margin-bottom: 20px;
-    }
-    .banner-title {
       font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      color: #ec4899;
       font-weight: 700;
-      margin-bottom: 6px;
+      padding: 5px 12px;
+      border-radius: 20px;
     }
-    .banner-text {
-      font-size: 20px;
-      font-weight: 900;
-      background: linear-gradient(90deg, #a855f7, #ec4899, #3b82f6);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      animation: gradientShift 4s infinite linear;
-    }
-    @keyframes gradientShift {
-      0% { filter: hue-rotate(0deg); }
-      100% { filter: hue-rotate(360deg); }
-    }
+    .shield-groq { background: rgba(139, 92, 246, 0.2); border: 1px solid rgba(139, 92, 246, 0.4); color: #c084fc; }
+    .shield-bot { background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.4); color: #60a5fa; }
+    .shield-user { background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; }
 
-    /* YouTube CTA Button */
-    .yt-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      width: 100%;
-      background: linear-gradient(135deg, #ff0000, #c40000);
-      color: #ffffff;
-      font-weight: 700;
-      font-size: 16px;
-      padding: 16px 24px;
-      border-radius: 16px;
-      text-decoration: none;
-      box-shadow: 0 10px 25px rgba(255, 0, 0, 0.4);
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      margin-bottom: 20px;
-    }
-    .yt-btn:hover {
-      transform: translateY(-3px) scale(1.02);
-      box-shadow: 0 15px 35px rgba(255, 0, 0, 0.6);
-    }
-
-    /* Security Checklist Cards */
-    .security-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
-      margin-bottom: 20px;
-      text-align: left;
-    }
-    .sec-card {
-      background: rgba(30, 41, 59, 0.6);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 14px;
-      padding: 12px 14px;
-    }
-    .sec-title {
-      font-size: 12px;
-      font-weight: 700;
-      color: #38bdf8;
-      margin-bottom: 3px;
-    }
-    .sec-desc {
-      font-size: 11px;
-      color: #94a3b8;
-    }
-
-    /* Stats Grid */
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 10px;
-      margin-bottom: 20px;
+      margin: 20px 0;
     }
     .stat-card {
       background: rgba(30, 41, 59, 0.6);
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 14px;
-      padding: 12px;
-      text-align: center;
+      padding: 12px 8px;
     }
-    .stat-label {
-      font-size: 10px;
-      color: #64748b;
-      text-transform: uppercase;
-      margin-bottom: 4px;
-      font-weight: 600;
-    }
-    .stat-value {
-      font-size: 14px;
-      font-weight: 700;
-      color: #a855f7;
-    }
+    .stat-label { font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 600; margin-bottom: 4px; }
+    .stat-value { font-size: 14px; font-weight: 700; color: #a855f7; }
 
-    .footer-note {
-      font-size: 12px;
-      color: #64748b;
-      display: flex;
+    .yt-btn {
+      display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 8px;
+      width: 100%;
+      background: linear-gradient(135deg, #ff0000, #c40000);
+      color: #ffffff;
+      font-weight: 700;
+      font-size: 15px;
+      padding: 14px 20px;
+      border-radius: 14px;
+      text-decoration: none;
+      box-shadow: 0 10px 25px rgba(255, 0, 0, 0.3);
+      transition: all 0.3s ease;
     }
-    .pulse-dot {
-      width: 8px;
-      height: 8px;
-      background-color: #10b981;
-      border-radius: 50%;
-      display: inline-block;
-    }
+    .yt-btn:hover { transform: translateY(-2px); box-shadow: 0 15px 35px rgba(255, 0, 0, 0.5); }
   </style>
 </head>
 <body>
@@ -392,189 +915,103 @@ app.get('/', (req, res) => {
   <div class="bg-blob blob-2"></div>
 
   <div class="container">
-    <div class="profile-section">
+    <div class="header-section">
       <div class="avatar-wrapper">
         <img class="avatar" src="${avatarUrl}" alt="Avatar">
         <div class="status-indicator"></div>
       </div>
-      <div class="username">${userTag}</div>
-      <div class="user-tag">⚡ 7/24 Aktif User Token</div>
+      <div class="title">Eko Yıldız AI & Canlı Sohbet Sistemi</div>
+      <div class="subtitle">Bot: ${botTag} | User: ${userTag}</div>
     </div>
 
     <div class="shields-wrapper">
-      <div class="shield-badge shield-ddos">
-        🛡️ ANTI-DDOS FLOOD PROTECTION (ACTIVE)
-      </div>
-      <div class="shield-badge shield-antiban">
-        🔒 ANTI-BAN HUMAN SIMULATOR (ACTIVE)
-      </div>
-    </div>
-
-    <div class="banner">
-      <div class="banner-title">🎮 DISCORD ZENGİN DURUM (RICH PRESENCE)</div>
-      <div class="banner-text">Eko Yıldız youtube kanalına abone ol!</div>
-    </div>
-
-    <a href="https://www.youtube.com/@EkoYildiz" target="_blank" class="yt-btn">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-      </svg>
-      Eko Yıldız YouTube Kanalına Abone Ol!
-    </a>
-
-    <!-- Security Grid -->
-    <div class="security-grid">
-      <div class="sec-card">
-        <div class="sec-title">🛡️ Rate Limit (IP Sınırlaması)</div>
-        <div class="sec-desc">IP başına dakikada maks 60 istek izni verilir.</div>
-      </div>
-      <div class="sec-card">
-        <div class="sec-title">📦 Payload Size Cap (10kb)</div>
-        <div class="sec-desc">Büyük paketlerle bellek doldurma DDoS'u engellenir.</div>
-      </div>
-      <div class="sec-card">
-        <div class="sec-title">⛑️ Helmet Security Headers</div>
-        <div class="sec-desc">XSS, MIME Sniffing ve Header açıklarına karşı korumalı.</div>
-      </div>
-      <div class="sec-card">
-        <div class="sec-title">🌙 Gece İnsan Uykusu</div>
-        <div class="sec-desc">01:00 - 08:00 saatleri arası Boşta (Idle) moda geçer.</div>
-      </div>
+      <div class="shield-badge shield-groq">🤖 GROQ AI (llama-3.3-70b)</div>
+      <div class="shield-badge shield-bot">⚡ BOT TOKEN AKTİF</div>
+      <div class="shield-badge shield-user">🔒 USER TOKEN 7/24 AKTİF</div>
     </div>
 
     <div class="stats-grid">
       <div class="stat-card">
-        <div class="stat-label">Sistem Durumu</div>
-        <div class="stat-value" style="color: #10b981;">${status}</div>
+        <div class="stat-label">Aktif Görüşme</div>
+        <div class="stat-value" style="color: #10b981;">${activeName}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">DDoS Koruması</div>
-        <div class="stat-value" style="color: #60a5fa;">AKTİF</div>
+        <div class="stat-label">Sırada Bekleyen</div>
+        <div class="stat-value" style="color: #f59e0b;">${pendingCount} kişi</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Uptime</div>
-        <div class="stat-value" id="uptimeCounter">0s</div>
+        <div class="stat-label">Karaliste</div>
+        <div class="stat-value" style="color: #ef4444;">${blacklist.size} kişi</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">İletilen Mesaj</div>
+        <div class="stat-value">${stats.messagesBridged}</div>
       </div>
     </div>
 
-    <div class="footer-note">
-      <span class="pulse-dot"></span> Render & External CronJob Uyumlu (/ping & /health)
-    </div>
+    <a href="https://www.youtube.com/@EkoYildiz" target="_blank" class="yt-btn">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+      </svg>
+      Eko Yıldız YouTube Kanalına Abone Ol!
+    </a>
   </div>
-
-  <script>
-    const startTime = ${startTime};
-    function updateUptime() {
-      const now = Date.now();
-      const diffSec = Math.floor((now - startTime) / 1000);
-      const hours = Math.floor(diffSec / 3600);
-      const mins = Math.floor((diffSec % 3600) / 60);
-      const secs = diffSec % 60;
-      document.getElementById('uptimeCounter').innerText = hours + 'h ' + mins + 'm ' + secs + 's';
-    }
-    setInterval(updateUptime, 1000);
-    updateUptime();
-  </script>
 </body>
 </html>
   `;
   res.send(html);
 });
 
-// -------------------------------------------------------------
-// CRONJOB VE UPTIME HIZLI HEALTH PING ENDPOINTLERİ
-// -------------------------------------------------------------
-app.get('/ping', cronPingLimiter, (req, res) => {
-  res.status(200).send('pong');
-});
+app.get('/ping', cronPingLimiter, (req, res) => res.status(200).send('pong'));
 
 app.get('/health', cronPingLimiter, (req, res) => {
   res.status(200).json({
     status: 'ok',
-    user: client.user ? client.user.tag : 'connecting',
-    humanMode: currentMode,
-    ddosProtection: 'ACTIVE (Rate Limit: 60 req/min per IP)',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.get('/api/status', cronPingLimiter, (req, res) => {
-  res.status(200).json({
-    botStatus: client.user ? 'online' : 'offline',
-    humanSimulationMode: currentMode,
-    botTag: client.user ? client.user.tag : null,
-    presenceActivity: 'Eko Yıldız youtube kanalına abone ol!',
-    security: {
-      ddosRateLimiter: 'ACTIVE (60 req/min)',
-      helmetSecurityHeaders: true,
-      payloadLimit: '10kb',
-      onlyWebSocketGateway: true
-    },
-    uptimeSeconds: process.uptime()
+    botUser: botClient.user ? botClient.user.tag : 'offline',
+    selfUser: userClient.user ? userClient.user.tag : 'offline',
+    activeChat: activeChat ? activeChat.username : null,
+    pendingQueueCount: reservationQueue.filter(q => q.status === 'pending').length,
+    blacklistCount: blacklist.size,
+    uptime: process.uptime()
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`[HTTP SUNUCU] Anti-DDoS Dashboard & CronJob Portu ${PORT} üzerinde aktif!`);
+  console.log(`[HTTP SUNUCU] Dashboard ve Health Check Portu ${PORT} üzerinde aktif!`);
 });
 
-// -------------------------------------------------------------
-// RENDER UYKU ENGELLEYİCİ SELF-PING MEKANİZMASI
-// -------------------------------------------------------------
+// Render Ping Döngüsü
 const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
 if (RENDER_URL) {
   setInterval(async () => {
     try {
       await axios.get(`${RENDER_URL}/ping`);
-      console.log(`[SELF-PING] Render servisi tetiklendi: ${RENDER_URL}/ping`);
-    } catch (err) {
-      console.error(`[SELF-PING HATA] ${err.message}`);
-    }
+      console.log(`[SELF-PING] Render ping atıldı: ${RENDER_URL}/ping`);
+    } catch (e) {}
   }, 4 * 60 * 1000);
 }
 
 // -------------------------------------------------------------
-// DISCORD SELFBOT GİRİŞ VE İNSAN TAKLİDİ DÖNGÜSÜ
-// -------------------------------------------------------------
-const token = process.env.TOKEN || process.env.USER_TOKEN;
-
-if (!token) {
-  console.error('[HATA] .env dosyasında veya Render Environment panellerinde TOKEN bulunamadı!');
-  process.exit(1);
-}
-
-client.on('ready', async () => {
-  console.log(`====================================================`);
-  console.log(`[BAŞARILI] Hesaba Giriş Yapıldı: ${client.user.tag}`);
-  console.log(`[ANTI-DDOS] Rate Limiter & Helmet Güvenlik Kalkanı Aktif.`);
-  console.log(`[ANTI-DETECTION] Windows 10 Discord Desktop Client Taklidi Aktif.`);
-  console.log(`====================================================`);
-
-  updatePresenceHumanSimulated();
-  setInterval(updatePresenceHumanSimulated, 15 * 60 * 1000);
-});
-
-client.on('disconnect', () => {
-  console.warn('[UYARI] Discord bağlantısı koptu, yeniden bağlanılıyor...');
-});
-
-client.on('error', (err) => {
-  console.error('[CLIENT HATA]', err.message);
-});
-
-// -------------------------------------------------------------
-// ÇÖKMELERİ ENGELLEYEN SİSTEM KORUYUCULARI
+// SİSTEM GİRİŞLERİ VE ÇÖKME KORUMALARI
 // -------------------------------------------------------------
 process.on('uncaughtException', (err) => {
-  console.error('[SİSTEM HATA - Uncaught Exception]', err.message);
+  console.error('[UNCAUGHT EXCEPTION]', err.message);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('[SİSTEM HATA - Unhandled Rejection]', reason);
+  console.error('[UNHANDLED REJECTION]', reason);
 });
 
-// Giriş Yap
-client.login(token).catch((err) => {
-  console.error('[GİRİŞ HATASI] Token geçersiz veya engellendi:', err.message);
-});
+// 1. Bot Token Girişi
+if (BOT_TOKEN) {
+  botClient.login(BOT_TOKEN).catch(err => console.error('[BOT LOGIN HATA]', err.message));
+} else {
+  console.warn('[UYARI] .env içinde BOTTOKEN bulunamadı!');
+}
+
+// 2. User Token Girişi
+if (USER_TOKEN) {
+  userClient.login(USER_TOKEN).catch(err => console.error('[USER LOGIN HATA]', err.message));
+} else {
+  console.warn('[UYARI] .env içinde TOKEN bulunamadı!');
+}
