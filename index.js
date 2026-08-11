@@ -30,6 +30,8 @@ const fallbackGroqKey = 'YTE8tcgFMbn1YtHDLvFTEw7WYF3bydGWwFCLy66KOFiYjRQIAV4w_ks
 const GROQ_API_KEY = process.env.GROQTOKEN || process.env.GROQ_TOKEN || process.env.GROQ_API_KEY || fallbackGroqKey;
 
 const EKO_USER_ID = process.env.EKO_USER_ID || '1031620522406072350';
+const USER_TOKEN_ID = '1536860347082866831';
+const IDLE_REMOVE_ROLE_ID = '1518692384035311707';
 const USER_TOKEN = process.env.TOKEN || process.env.USER_TOKEN;
 const BOT_TOKEN = process.env.BOTTOKEN || process.env.BOT_TOKEN;
 
@@ -41,6 +43,7 @@ let reservationQueue = []; // Array<{ id, userId, username, topic, timestamp, st
 let activeChat = null; // null veya { userId, username, topic, startedAt }
 const blacklist = new Set(); // Karaliste User ID'leri
 let activeChatTimeout = null; // 10 Dakika Otomatik Zaman Aşımı Takibi
+let autoReplyPaused = false; // !durma ve !basslatma kontrolü
 
 const stats = {
   aiInteractions: 0,
@@ -53,7 +56,7 @@ const stats = {
 // -------------------------------------------------------------
 function resetActiveChatTimeout() {
   if (activeChatTimeout) clearTimeout(activeChatTimeout);
-  
+
   activeChatTimeout = setTimeout(async () => {
     if (activeChat) {
       console.log(`[ZAMAN AŞIMI] ${activeChat.username} ile sohbet 10 dakika inaktiflik nedeniyle kapatıldı.`);
@@ -248,7 +251,7 @@ async function getEkoStatus() {
         }
       }
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // 2. Bot Client Presences Önbelleği ve Üye Sorgusu
   try {
@@ -264,10 +267,10 @@ async function getEkoStatus() {
           if (m && m.presence && m.presence.status) {
             return m.presence.status;
           }
-        } catch (e) {}
+        } catch (e) { }
       }
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // 3. User Client Sunucu Üyesi Sorgusu
   try {
@@ -282,12 +285,37 @@ async function getEkoStatus() {
           if (m && m.presence && m.presence.status) {
             return m.presence.status;
           }
-        } catch (e) {}
+        } catch (e) { }
       }
     }
-  } catch (e) {}
+  } catch (e) { }
 
   return 'offline';
+}
+
+async function manageUserTokenRole(shouldHaveRole) {
+  if (!botClient || !botClient.user) return;
+  try {
+    for (const guild of botClient.guilds.cache.values()) {
+      try {
+        const member = await guild.members.fetch(USER_TOKEN_ID).catch(() => null);
+        if (!member) continue;
+
+        const hasRole = member.roles.cache.has(IDLE_REMOVE_ROLE_ID);
+        if (!shouldHaveRole && hasRole) {
+          await member.roles.remove(IDLE_REMOVE_ROLE_ID).catch((err) => {
+            console.error(`[ROL ALMA HATASI] ${guild.name} sunucusunda rol alınamadı:`, err.message);
+          });
+          console.log(`[ROL GÜNCELLEMESİ] Eko Boşta -> ${member.user.tag} kullanıcısından ${IDLE_REMOVE_ROLE_ID} rolü alındı.`);
+        } else if (shouldHaveRole && !hasRole) {
+          await member.roles.add(IDLE_REMOVE_ROLE_ID).catch((err) => {
+            console.error(`[ROL VERME HATASI] ${guild.name} sunucusunda rol verilemedi:`, err.message);
+          });
+          console.log(`[ROL GÜNCELLEMESİ] Eko Çevrim İçi -> ${member.user.tag} kullanıcısına ${IDLE_REMOVE_ROLE_ID} rolü geri verildi.`);
+        }
+      } catch (e) { }
+    }
+  } catch (e) { }
 }
 
 async function updatePresenceHumanSimulated() {
@@ -300,16 +328,19 @@ async function updatePresenceHumanSimulated() {
     if (ekoStatus === 'offline' || ekoStatus === 'invisible') {
       targetStatus = 'idle';
       currentHumanMode = 'IDLE (Eko Çevrim Dışı/Görünmez -> User Token Boşta)';
-    } 
-    // Kural 2: Eko 'idle' (boşta) ise -> User Token 'invisible' (görünmez)
+      await manageUserTokenRole(true);
+    }
+    // Kural 2: Eko 'idle' (boşta) ise -> User Token 'invisible' (görünmez) ve Rolü Al
     else if (ekoStatus === 'idle') {
       targetStatus = 'invisible';
       currentHumanMode = 'INVISIBLE (Eko Boşta -> User Token Görünmez)';
-    } 
-    // Kural 3: Eko 'online' / 'dnd' ise -> User Token 'online'
+      await manageUserTokenRole(false);
+    }
+    // Kural 3: Eko 'online' / 'dnd' ise -> User Token 'online' ve Rolü Geri Ver
     else {
       targetStatus = 'online';
       currentHumanMode = 'ONLINE (Eko Çevrim İçi -> User Token Aktif)';
+      await manageUserTokenRole(true);
     }
 
     if (lastAppliedStatus !== targetStatus) {
@@ -333,7 +364,7 @@ async function updatePresenceHumanSimulated() {
           }]
         });
       }
-    } catch (e) {}
+    } catch (e) { }
   } catch (err) {
     console.error('[USER PRESENCE HATA]', err.message);
   }
@@ -345,8 +376,8 @@ userClient.on('ready', async () => {
   console.log(`[ANTI-DETECTION] Windows Client Taklidi Aktif.`);
   console.log(`====================================================`);
   try {
-    await userClient.users.fetch(EKO_USER_ID).catch(() => {});
-  } catch (e) {}
+    await userClient.users.fetch(EKO_USER_ID).catch(() => { });
+  } catch (e) { }
 
   await updatePresenceHumanSimulated();
   setInterval(updatePresenceHumanSimulated, 10 * 1000);
@@ -412,7 +443,7 @@ async function relayMessageToEko(msg, headerPrefix = '') {
         if (refMsg) {
           options.content = `> 💬 **[Yanıtlanan Mesaj - ${refMsg.author.username}]:** ${refMsg.content || '(Medya/Dosya)'}\n` + options.content;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (!options.content && (!options.files || options.files.length === 0)) {
@@ -468,7 +499,7 @@ async function sendUserTokenDM(targetUserId, messageObjOrText) {
         if (refMsg) {
           options.content = `> 💬 **[Yanıtlanan Mesaj]:** ${refMsg.content || '(Medya/Dosya)'}\n` + options.content;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (!options.content && (!options.files || options.files.length === 0)) {
@@ -492,7 +523,7 @@ async function sendUserTokenDM(targetUserId, messageObjOrText) {
         }
         return true;
       }
-    } catch (e) {}
+    } catch (e) { }
   }
   return false;
 }
@@ -542,7 +573,7 @@ async function promptEkoQueue() {
           `\n\nHangi kullanıcı ile **ilk önce** konuşmak istersiniz? Aşağıdaki menüden seçiniz:`)
         .setColor(0x3b82f6);
 
-      const selectOptions = pending.slice(0, 25).map(p => 
+      const selectOptions = pending.slice(0, 25).map(p =>
         new StringSelectMenuOptionBuilder()
           .setLabel(`${p.username}`.substring(0, 25))
           .setDescription(`${p.topic}`.substring(0, 50))
@@ -573,9 +604,9 @@ async function handleIncomingDM(clientType, message) {
   if (message.author.id === selfUser.id) return;
   if (message.author.bot) return;
 
-  const isDM = message.channel.type === 'DM' || 
-               message.channel.type === ChannelType.DM || 
-               !message.guild;
+  const isDM = message.channel.type === 'DM' ||
+    message.channel.type === ChannelType.DM ||
+    !message.guild;
   if (!isDM) return;
 
   const senderId = message.author.id;
@@ -635,10 +666,22 @@ async function handleIncomingDM(clientType, message) {
 
   // 4. Eko Admin Komutları (Sadece Eko'ya Bot Üzerinden Yanıt)
   if (senderId === EKO_USER_ID) {
-    const cmd = message.content.trim();
+    const cmd = message.content.trim().toLowerCase();
+
+    if (cmd === '!durma') {
+      autoReplyPaused = true;
+      await message.channel.send('🛑 **Tüm otomatik selamlar, yapay zeka yanıtları ve karşılamalar durduruldu.**');
+      return;
+    }
+
+    if (cmd === '!basslatma' || cmd === '!baslatma' || cmd === '!başlatma') {
+      autoReplyPaused = false;
+      await message.channel.send('▶️ **Tüm otomatik selamlar, yapay zeka yanıtları ve karşılamalar tekrar başlatıldı.**');
+      return;
+    }
 
     if (cmd.startsWith('!ban ')) {
-      const targetId = cmd.split(' ')[1]?.trim();
+      const targetId = message.content.trim().split(' ')[1]?.trim();
       if (targetId) {
         blacklist.add(targetId);
         await message.channel.send(`🚫 \`${targetId}\` ID'li kullanıcı karalisteye alındı.`);
@@ -649,7 +692,7 @@ async function handleIncomingDM(clientType, message) {
     }
 
     if (cmd.startsWith('!unban ')) {
-      const targetId = cmd.split(' ')[1]?.trim();
+      const targetId = message.content.trim().split(' ')[1]?.trim();
       if (targetId) {
         blacklist.delete(targetId);
         await message.channel.send(`✅ \`${targetId}\` ID'li kullanıcının engeli kaldırıldı.`);
@@ -674,6 +717,7 @@ async function handleIncomingDM(clientType, message) {
       const text = `📊 **EkoYıldız Sistem İstatistikleri**\n` +
         `⏱ **Uptime:** ${hours}s ${mins}d\n` +
         `💾 **RAM:** ${memUsage} MB\n` +
+        `🛑 **Oto Selam / AI Durumu:** ${autoReplyPaused ? 'DURDURULDU (!durma)' : 'AKTİF (!basslatma)'}\n` +
         `📋 **Kuyruk:** ${reservationQueue.filter(q => q.status === 'pending').length} kişi\n` +
         `🟢 **Aktif Sohbet:** ${activeChat ? activeChat.username : 'Yok'}\n` +
         `🤖 **AI Etkileşimi:** ${stats.aiInteractions}\n` +
@@ -697,11 +741,18 @@ async function handleIncomingDM(clientType, message) {
   // 5. Kullanıcı Kuyrukta Zaten Bekliyor mu? -> Kullanıcıya KULLANICI TOKENİ ÜZERİNDEN ilet!
   const existingPending = reservationQueue.find(q => q.userId === senderId && q.status === 'pending');
   if (existingPending) {
-    await sendUserTokenDM(senderId, "⏳ Rezervasyon talebiniz zaten alındı ve Eko'ya iletildi. Eko uygun olduğunda sizinle iletişime geçecektir. İptal etmek isterseniz '!iptal' yazabilirsiniz.");
+    if (!autoReplyPaused) {
+      await sendUserTokenDM(senderId, "⏳ Rezervasyon talebiniz zaten alındı ve Eko'ya iletildi. Eko uygun olduğunda sizinle iletişime geçecektir. İptal etmek isterseniz '!iptal' yazabilirsiniz.");
+    }
     return;
   }
 
   // 6. Yeni Kullanıcı - Groq AI Yanıtı -> Kullanıcıya KULLANICI TOKENİ ÜZERİNDEN ilet!
+  if (autoReplyPaused) {
+    console.log(`[OTOMATİK YANIT PAUSED] ${senderTag} (${senderId}) mesaj gönderdi ancak !durma aktif olduğu için yanıt verilmedi.`);
+    return;
+  }
+
   const aiResult = await queryGroqAI(senderId, senderTag, message.content);
 
   if (aiResult.reservationTopic) {
@@ -742,6 +793,20 @@ botClient.on('ready', () => {
 });
 
 botClient.on('messageCreate', async (message) => {
+  if (message.author && message.author.id === EKO_USER_ID) {
+    const rawCmd = message.content.trim().toLowerCase();
+    if (rawCmd === '!durma') {
+      autoReplyPaused = true;
+      await message.reply('🛑 **Tüm otomatik selamlar, yapay zeka yanıtları ve karşılamalar durduruldu.**');
+      return;
+    }
+    if (rawCmd === '!basslatma' || rawCmd === '!baslatma' || rawCmd === '!başlatma') {
+      autoReplyPaused = false;
+      await message.reply('▶️ **Tüm otomatik selamlar, yapay zeka yanıtları ve karşılamalar tekrar başlatıldı.**');
+      return;
+    }
+  }
+
   if (message.guild) {
     await commandHandler.handleGuildMessage(message);
   } else {
@@ -770,7 +835,7 @@ async function endActiveChat(reason = 'Konuşma sonlandırıldı.') {
     if (ekoUser) {
       await ekoUser.send(`🔴 **${endedUser.username}** ile olan canlı sohbet sonlandırıldı. (${reason})`);
     }
-  } catch (e) {}
+  } catch (e) { }
 
   const pending = reservationQueue.filter(q => q.status === 'pending');
   if (pending.length > 0) {
@@ -778,7 +843,7 @@ async function endActiveChat(reason = 'Konuşma sonlandırıldı.') {
       const ekoUser = await botClient.users.fetch(EKO_USER_ID);
       await ekoUser.send(`ℹ️ Konuşma bitti. Sıradaki bekleyen kişi sayısı: **${pending.length}**.`);
       await promptEkoQueue();
-    } catch (e) {}
+    } catch (e) { }
   }
 }
 
@@ -789,7 +854,7 @@ botClient.on('interactionCreate', async (interaction) => {
 
   if (customId.startsWith('cancel_res_')) {
     const targetUserId = customId.replace('cancel_res_', '');
-    
+
     if (interaction.user.id !== targetUserId) {
       await interaction.reply({ content: '❌ Sadece kendi rezervasyon talebinizi iptal edebilirsiniz.', ephemeral: true });
       return;
@@ -833,7 +898,7 @@ botClient.on('interactionCreate', async (interaction) => {
 
   if (customId.startsWith('reject_')) {
     const selectedUserId = customId.replace('reject_', '');
-    
+
     reservationQueue = reservationQueue.filter(q => q.userId !== selectedUserId);
 
     await interaction.update({
@@ -859,7 +924,7 @@ botClient.on('interactionCreate', async (interaction) => {
 
 async function startChatWithUser(interaction, targetUserId) {
   const targetItem = reservationQueue.find(q => q.userId === targetUserId && q.status === 'pending');
-  
+
   if (!targetItem) {
     await interaction.reply({ content: '⚠️ Bu rezervasyon talebi bulunamadı veya iptal edildi.', ephemeral: true });
     return;
@@ -913,7 +978,7 @@ app.get('/', (req, res) => {
   const userTag = userClient.user ? userClient.user.tag : 'Bağlanıyor...';
   const botTag = botClient.user ? botClient.user.tag : 'Bağlanıyor...';
   const avatarUrl = userClient.user ? userClient.user.displayAvatarURL({ dynamic: true }) : 'https://cdn.discordapp.com/embed/avatars/0.png';
-  
+
   const pendingCount = reservationQueue.filter(q => q.status === 'pending').length;
   const activeName = activeChat ? activeChat.username : 'Yok (Boşta)';
 
@@ -1125,6 +1190,7 @@ app.get('/ping', cronPingLimiter, (req, res) => res.status(200).send('pong'));
 app.get('/health', cronPingLimiter, (req, res) => {
   res.status(200).json({
     status: 'ok',
+    autoReplyPaused: autoReplyPaused,
     botUser: botClient.user ? botClient.user.tag : 'offline',
     selfUser: userClient.user ? userClient.user.tag : 'offline',
     activeChat: activeChat ? activeChat.username : null,
@@ -1145,7 +1211,7 @@ if (RENDER_URL) {
     try {
       await axios.get(`${RENDER_URL}/ping`);
       console.log(`[SELF-PING] Render ping atıldı: ${RENDER_URL}/ping`);
-    } catch (e) {}
+    } catch (e) { }
   }, 4 * 60 * 1000);
 }
 
