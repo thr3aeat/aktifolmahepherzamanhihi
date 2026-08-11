@@ -1,28 +1,38 @@
-# 🚀 Eko Yıldız - Discord User Token 7/24 Aktif Tutma Projesi
+# 🚀 Eko Yıldız - 7/24 Anti-Detection Discord User Token
 
-Bu proje, Discord hesabınızı (User Token) **Render.com** üzerinde 7/24 kesintisiz online tutar, hesabınızda **"Eko Yıldız youtube kanalına abone ol!"** mor yayın (Streaming) etkinliğini gösterir ve şık bir web dashboard sunar.
-
----
-
-## 🌟 Öne Çıkan Gelişmiş Özellikler
-- 📺 **Özel Etkinlik:** Profilinizde **"Eko Yıldız youtube kanalına abone ol!"** mor yayın rozeti gözükür.
-- 🎨 **Şok Edici Web Dashboard:** Web sitenize girildiğinde cam efektli (Glassmorphic), canlı Uptime ve profil detayları gösteren ultra modern arayüz.
-- ⏰ **CronJob Desteği:** CronJob servisleriniz için özel hazırlanmış hafif `/ping` ve `/health` endpoint'leri.
-- 🛡️ **Anti-Crash Koruması:** `uncaughtException` ve `unhandledRejection` ile sunucunuz asla kapanmaz.
-- ⚡ **Self-Ping Mekanizması:** Render Free Tier uykusunu otomatik engeller.
+Bu proje, Discord hesabınızı (User Token) **Render.com** üzerinde 7/24 kesintisiz online tutar. Ban riskini en aza indirmek için **gelişmiş Anti-Detection (Tespit Engelleme)** teknikleri kullanır.
 
 ---
 
-## 🛠️ CronJob Bağlantı Adresleri (Cron-Job.org / UptimeRobot)
-CronJob bağlarken şu adreslerden birini kullanabilirsiniz (Örnek: 5 dakikada bir istek):
+## 🛡️ Ban Riskini Azaltma (Anti-Detection) Teknikleri
 
-- **Ping Endpoint (Hızlı):** `https://user-token-724.onrender.com/ping` (Dönen cevap: `pong`)
-- **Health JSON Endpoint:** `https://user-token-724.onrender.com/health`
+1. 🔌 **Yalnızca WebSocket (Gateway) Bağlantısı:**
+   - Kod **sıfır (0) REST API isteği** atar (mesaj göndermez, sunucuya katılmaz, DM atmaz).
+   - Yalnızca hesabın çevrim içi kalmasını ve zengin durum (Rich Presence) yansıtmasını sağlar.
+
+2. 💻 **Client Headers & Browser Spoofing:**
+   - Discord'a bağlantı kurulurken orijinal **Discord Windows 10 Desktop Client** bilgileri (`release_channel: 'stable'`, `os: 'Windows'`) taklit edilir.
+
+3. 🌙 **Gece İnsan Taklidi (Natural Human Simulation):**
+   - Hesabın 30 gün boyunca 7/24 aralıksız "Çevrim içi" kalması yapay zeka tespit sistemlerine takılabilir.
+   - Kod, **Türkiye saati ile gece 01:00 - 08:00** arasında hesabın durumunu otomatik olarak **"Boşta" (Idle / Sleep)** moduna alır.
+   - Gündüz saatlerinde rastgele %10 ihtimalle kısa mola (kahve molası simülasyonu) verir.
+
+4. 📺 **Özel Etkinlik:**
+   - Profilinizde **"Eko Yıldız youtube kanalına abone ol!"** mor yayıncı rozeti gösterilir.
+
+---
+
+## 🛠️ CronJob Bağlantı Adresleri
+CronJob bağlarken şu adreslerden birini kullanabilirsiniz:
+
+- **Hızlı Ping:** `https://user-token-724.onrender.com/ping` (Cevap: `pong`)
+- **Health JSON:** `https://user-token-724.onrender.com/health`
 - **Ana Dashboard:** `https://user-token-724.onrender.com/`
 
 ---
 
-## 💻 Kurulum ve Render Kullanımı
-1. Projede `.env` veya Render Environment Variables kısmına **sadece `TOKEN`** yazın.
+## 💻 Kurulum
+1. `.env` veya Render EnvironmentVariables: **Sadece `TOKEN`**
 2. Render Build Command: `npm install`
 3. Render Start Command: `npm start`

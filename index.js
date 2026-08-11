@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const { Client, CustomStatus } = require('discord.js-selfbot-v13');
+const { Client } = require('discord.js-selfbot-v13');
 const axios = require('axios');
 
 // Express Server
@@ -8,11 +8,85 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const startTime = Date.now();
 
-// Discord Client Instance
-const client = new Client({ checkUpdate: false });
+// -------------------------------------------------------------
+// 1. DISCORD SELFBOT CLIENT - (ANTI-DETECTION HEADER & GATEWAY CONFIG)
+// -------------------------------------------------------------
+// Sadece WebSocket (Gateway) bağlantısı kullanılır. REST API isteği GÖNDERİLMEZ.
+// Discord Masaüstü Windows istemcisi taklidi yapılır.
+const client = new Client({
+  checkUpdate: false,
+  ws: {
+    properties: {
+      os: 'Windows',
+      browser: 'Discord Client',
+      release_channel: 'stable',
+      client_version: '1.0.9015',
+      os_version: '10.0.19045',
+      device: ''
+    }
+  }
+});
+
+// Anti-Detection İnsan Taklidi Değişkenleri
+let currentMode = 'ONLINE'; // 'ONLINE' | 'IDLE_SLEEP' | 'MICRO_BREAK'
+let lastStatusChange = new Date();
+
+// Gece Saatlerinde Sleep/Idle Simülasyonu (01:00 - 08:00 arası Türkiye Saati / UTC+3)
+function getSimulatedHumanStatus() {
+  const date = new Date();
+  // UTC+3 Türkiye Saat Dilimine Göre Saat
+  const trtHour = (date.getUTCHours() + 3) % 24;
+
+  // Gece 01:00 ile 08:00 arası (İnsan Uyku Taklidi) -> Idle (Boşta) veya DND
+  if (trtHour >= 1 && trtHour < 8) {
+    currentMode = 'IDLE_SLEEP (Gece İnsan Uykusu Taklidi)';
+    return {
+      status: 'idle', // Gece boşta görünür
+      activityName: 'Eko Yıldız youtube kanalına abone ol!',
+      activityType: 'STREAMING'
+    };
+  }
+
+  // Gündüz Saatleri (Rastgele %10 şansla 15dk kahve molası / idle)
+  const isMicroBreak = Math.random() < 0.10;
+  if (isMicroBreak) {
+    currentMode = 'MICRO_BREAK (Mola Simülasyonu)';
+    return {
+      status: 'idle',
+      activityName: 'Eko Yıldız youtube kanalına abone ol!',
+      activityType: 'STREAMING'
+    };
+  }
+
+  currentMode = 'ONLINE (Çevrim içi İnsan Taklidi)';
+  return {
+    status: 'online',
+    activityName: 'Eko Yıldız youtube kanalına abone ol!',
+    activityType: 'STREAMING'
+  };
+}
+
+function updatePresenceHumanSimulated() {
+  if (!client.user) return;
+  try {
+    const sim = getSimulatedHumanStatus();
+    client.user.setPresence({
+      status: sim.status,
+      activities: [{
+        name: sim.activityName,
+        type: sim.activityType,
+        url: 'https://www.twitch.tv/discord' // Mor Yayın Rozeti
+      }]
+    });
+    lastStatusChange = new Date();
+    console.log(`[ANTI-BAN PRESENCE] Mod: ${currentMode} | Durum: ${sim.status} | Etkinlik: "${sim.activityName}"`);
+  } catch (err) {
+    console.error(`[PRESENCE HATA]`, err.message);
+  }
+}
 
 // -------------------------------------------------------------
-// 1. ŞOK EDİCİ GÖRSEL DASHBOARD (GET /)
+// 2. ŞOK EDİCİ GÖRSEL DASHBOARD (GET /)
 // -------------------------------------------------------------
 app.get('/', (req, res) => {
   const userTag = client.user ? client.user.tag : 'Bağlanıyor...';
@@ -25,16 +99,12 @@ app.get('/', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Eko Yıldız | 7/24 Aktif Token Botu</title>
+  <title>Eko Yıldız | 7/24 Anti-Detection User Token</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;900&display=swap" rel="stylesheet">
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Outfit', sans-serif;
       background-color: #060913;
@@ -46,45 +116,35 @@ app.get('/', (req, res) => {
       overflow-x: hidden;
       position: relative;
     }
-    /* Dynamic Glowing Background Blobs */
     .bg-blob {
       position: absolute;
       width: 450px;
       height: 450px;
       border-radius: 50%;
-      filter: blur(120px);
+      filter: blur(130px);
       opacity: 0.45;
       z-index: 0;
       animation: pulse 8s infinite alternate ease-in-out;
     }
-    .blob-1 {
-      top: -100px;
-      left: -100px;
-      background: linear-gradient(135deg, #7c3aed, #db2777);
-    }
-    .blob-2 {
-      bottom: -100px;
-      right: -100px;
-      background: linear-gradient(135deg, #2563eb, #059669);
-    }
+    .blob-1 { top: -100px; left: -100px; background: linear-gradient(135deg, #7c3aed, #db2777); }
+    .blob-2 { bottom: -100px; right: -100px; background: linear-gradient(135deg, #2563eb, #059669); }
     @keyframes pulse {
       0% { transform: scale(1) translate(0, 0); }
       100% { transform: scale(1.15) translate(30px, 30px); }
     }
 
-    /* Container Glassmorphism */
     .container {
       position: relative;
       z-index: 10;
       width: 90%;
-      max-width: 650px;
-      background: rgba(15, 23, 42, 0.7);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      max-width: 680px;
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 28px;
-      padding: 40px 30px;
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 30px rgba(124, 58, 237, 0.25);
+      padding: 40px 32px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 40px rgba(124, 58, 237, 0.25);
       text-align: center;
       animation: fadeIn 0.8s ease-out;
     }
@@ -93,25 +153,24 @@ app.get('/', (req, res) => {
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* User Profile Card */
     .profile-section {
       display: flex;
       flex-direction: column;
       align-items: center;
-      margin-bottom: 25px;
+      margin-bottom: 20px;
     }
     .avatar-wrapper {
       position: relative;
-      width: 100px;
-      height: 100px;
-      margin-bottom: 15px;
+      width: 96px;
+      height: 96px;
+      margin-bottom: 12px;
     }
     .avatar {
       width: 100%;
       height: 100%;
       border-radius: 50%;
       border: 3px solid #8b5cf6;
-      box-shadow: 0 0 20px rgba(139, 92, 246, 0.6);
+      box-shadow: 0 0 25px rgba(139, 92, 246, 0.6);
       object-fit: cover;
     }
     .status-indicator {
@@ -123,42 +182,54 @@ app.get('/', (req, res) => {
       border-radius: 50%;
       background-color: #10b981;
       border: 3px solid #0f172a;
-      box-shadow: 0 0 10px #10b981;
+      box-shadow: 0 0 12px #10b981;
       animation: statusGlow 2s infinite;
     }
     @keyframes statusGlow {
       0%, 100% { box-shadow: 0 0 8px #10b981; }
-      50% { box-shadow: 0 0 18px #10b981; }
+      50% { box-shadow: 0 0 20px #10b981; }
     }
 
     .username {
       font-size: 26px;
       font-weight: 700;
-      letter-spacing: -0.5px;
       color: #ffffff;
-      margin-bottom: 5px;
+      margin-bottom: 4px;
     }
     .user-tag {
-      font-size: 14px;
+      font-size: 13px;
       color: #94a3b8;
       background: rgba(255, 255, 255, 0.05);
-      padding: 4px 12px;
+      padding: 4px 14px;
       border-radius: 20px;
       border: 1px solid rgba(255, 255, 255, 0.08);
     }
 
-    /* Live Presence Display Banner */
+    /* Anti-Detection Shield Badge */
+    .anti-ban-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34d399;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 8px 18px;
+      border-radius: 30px;
+      margin: 15px 0 20px 0;
+    }
+
+    /* Banner */
     .banner {
       background: linear-gradient(135deg, rgba(124, 58, 237, 0.2), rgba(219, 39, 119, 0.2));
       border: 1px solid rgba(236, 72, 153, 0.3);
       border-radius: 18px;
-      padding: 18px 20px;
-      margin: 25px 0;
-      position: relative;
-      overflow: hidden;
+      padding: 16px 20px;
+      margin-bottom: 22px;
     }
     .banner-title {
-      font-size: 12px;
+      font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 1.5px;
       color: #ec4899;
@@ -178,7 +249,7 @@ app.get('/', (req, res) => {
       100% { filter: hue-rotate(360deg); }
     }
 
-    /* Youtube CTA Button */
+    /* YouTube CTA Button */
     .yt-btn {
       display: inline-flex;
       align-items: center;
@@ -194,43 +265,65 @@ app.get('/', (req, res) => {
       text-decoration: none;
       box-shadow: 0 10px 25px rgba(255, 0, 0, 0.4);
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      margin-bottom: 25px;
-      border: none;
-      cursor: pointer;
+      margin-bottom: 22px;
     }
     .yt-btn:hover {
       transform: translateY(-3px) scale(1.02);
       box-shadow: 0 15px 35px rgba(255, 0, 0, 0.6);
     }
 
+    /* Anti-Detection Security Checklist Cards */
+    .security-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+      text-align: left;
+    }
+    .sec-card {
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      padding: 12px 14px;
+    }
+    .sec-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #38bdf8;
+      margin-bottom: 3px;
+    }
+    .sec-desc {
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
     /* Stats Grid */
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
+      gap: 10px;
       margin-bottom: 20px;
     }
     .stat-card {
       background: rgba(30, 41, 59, 0.6);
       border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 16px;
-      padding: 14px;
+      border-radius: 14px;
+      padding: 12px;
       text-align: center;
     }
     .stat-label {
-      font-size: 11px;
+      font-size: 10px;
       color: #64748b;
       text-transform: uppercase;
-      margin-bottom: 6px;
+      margin-bottom: 4px;
       font-weight: 600;
     }
     .stat-value {
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 700;
-      color: #38bdf8;
+      color: #a855f7;
     }
 
-    /* Footer & CronJob Info */
     .footer-note {
       font-size: 12px;
       color: #64748b;
@@ -259,7 +352,14 @@ app.get('/', (req, res) => {
         <div class="status-indicator"></div>
       </div>
       <div class="username">${userTag}</div>
-      <div class="user-tag">⚡ 7/24 Kesintisiz Aktif Token</div>
+      <div class="user-tag">⚡ 7/24 Aktif User Token</div>
+    </div>
+
+    <div class="anti-ban-badge">
+      <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M10 1.944A11.954 11.954 0 012.166 5C2.056 5.649 2 6.319 2 7c0 5.225 3.34 9.67 8 11.317C14.66 16.67 18 12.225 18 7c0-.681-.056-1.35-.166-2.001A11.954 11.954 0 0110 1.944zM11 14a1 1 0 11-2 0 1 1 0 012 0zm0-7a1 1 0 10-2 0v3a1 1 0 102 0V7z" clip-rule="evenodd"/>
+      </svg>
+      ANTI-DETECTION SYSTEM ACTIVE (BAN RISK MINIMIZED)
     </div>
 
     <div class="banner">
@@ -274,23 +374,43 @@ app.get('/', (req, res) => {
       Eko Yıldız YouTube Kanalına Abone Ol!
     </a>
 
+    <!-- Anti-Detection Security Cards -->
+    <div class="security-grid">
+      <div class="sec-card">
+        <div class="sec-title">🔌 Sadece Gateway WS</div>
+        <div class="sec-desc">Sadece Socket açık tutulur. 0 REST API spam isteği.</div>
+      </div>
+      <div class="sec-card">
+        <div class="sec-title">🌙 Gece İnsan Taklidi</div>
+        <div class="sec-desc">Gece saatlerinde Boşta (Idle) moda otomatik geçer.</div>
+      </div>
+      <div class="sec-card">
+        <div class="sec-title">💻 Windows Client Spoof</div>
+        <div class="sec-desc">Orijinal Discord Windows masaüstü header'ları kullanılır.</div>
+      </div>
+      <div class="sec-card">
+        <div class="sec-title">☕ Rastgele Mola Simülatörü</div>
+        <div class="sec-desc">Gündüz saatlerinde insan gibi arada mola simüle edilir.</div>
+      </div>
+    </div>
+
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-label">Sistem Durumu</div>
         <div class="stat-value" style="color: #10b981;">${status}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Uptime</div>
-        <div class="stat-value" id="uptimeCounter">0s</div>
+        <div class="stat-label">İnsan Taklit Modu</div>
+        <div class="stat-value" style="font-size: 11px; color: #34d399;">${currentMode}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">CronJob Status</div>
-        <div class="stat-value" style="color: #a855f7;">READY</div>
+        <div class="stat-label">Uptime</div>
+        <div class="stat-value" id="uptimeCounter">0s</div>
       </div>
     </div>
 
     <div class="footer-note">
-      <span class="pulse-dot"></span> Render & External CronJob Uyumlu Sistem (/ping & /health)
+      <span class="pulse-dot"></span> Render & External CronJob Uyumlu (/ping & /health)
     </div>
   </div>
 
@@ -314,7 +434,7 @@ app.get('/', (req, res) => {
 });
 
 // -------------------------------------------------------------
-// 2. CRONJOB VE UPTIME HIZLI HEALTH PING ENDPOINTLERİ
+// 3. CRONJOB VE UPTIME HIZLI HEALTH PING ENDPOINTLERİ
 // -------------------------------------------------------------
 app.get('/ping', (req, res) => {
   res.status(200).send('pong');
@@ -324,6 +444,7 @@ app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
     user: client.user ? client.user.tag : 'connecting',
+    humanMode: currentMode,
     uptime: process.uptime(),
     timestamp: new Date().toISOString()
   });
@@ -332,18 +453,25 @@ app.get('/health', (req, res) => {
 app.get('/api/status', (req, res) => {
   res.status(200).json({
     botStatus: client.user ? 'online' : 'offline',
+    humanSimulationMode: currentMode,
     botTag: client.user ? client.user.tag : null,
     presenceActivity: 'Eko Yıldız youtube kanalına abone ol!',
+    antiDetection: {
+      onlyWebSocketGateway: true,
+      restApiSpamRequests: 0,
+      clientSpoof: 'Discord Desktop Windows 10',
+      humanSleepSimulator: 'ACTIVE (01:00 - 08:00 TRT Idle Sleep)'
+    },
     uptimeSeconds: process.uptime()
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`[HTTP SUNUCU] Dashboard ve CronJob Portu ${PORT} üzerinde aktif!`);
+  console.log(`[HTTP SUNUCU] Anti-Detection Dashboard & CronJob Portu ${PORT} üzerinde aktif!`);
 });
 
 // -------------------------------------------------------------
-// 3. RENDER UYKU ENGELLEYİCİ SELF-PING MEKANİZMASI
+// 4. RENDER UYKU ENGELLEYİCİ SELF-PING MEKANİZMASI
 // -------------------------------------------------------------
 const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
 if (RENDER_URL) {
@@ -358,7 +486,7 @@ if (RENDER_URL) {
 }
 
 // -------------------------------------------------------------
-// 4. DISCORD SELFBOT DURUM VE ETKİNLİK AYARLARI
+// 5. DISCORD SELFBOT GİRİŞ VE İNSAN TAKLİDİ DÖNGÜSÜ
 // -------------------------------------------------------------
 const token = process.env.TOKEN || process.env.USER_TOKEN;
 
@@ -367,33 +495,18 @@ if (!token) {
   process.exit(1);
 }
 
-function updatePresence() {
-  if (!client.user) return;
-  try {
-    client.user.setPresence({
-      status: 'online',
-      activities: [{
-        name: 'Eko Yıldız youtube kanalına abone ol!',
-        type: 'STREAMING',
-        url: 'https://www.twitch.tv/discord' // Purple Streaming status icon badge on Discord
-      }]
-    });
-    console.log(`[PRESENCE] Durum güncellendi: "Eko Yıldız youtube kanalına abone ol!"`);
-  } catch (err) {
-    console.error(`[PRESENCE HATA]`, err.message);
-  }
-}
-
 client.on('ready', async () => {
   console.log(`====================================================`);
   console.log(`[BAŞARILI] Hesaba Giriş Yapıldı: ${client.user.tag}`);
-  console.log(`[ETKİNLİK] "Eko Yıldız youtube kanalına abone ol!" ayarlandı.`);
+  console.log(`[ANTI-DETECTION] Windows 10 Discord Desktop Client Taklidi Aktif.`);
+  console.log(`[ANTI-DETECTION] 0 REST API İsteği (Sadece Gateway Socket).`);
+  console.log(`[ANTI-DETECTION] Gece İnsan Uykusu Simülatörü Aktif.`);
   console.log(`====================================================`);
 
-  updatePresence();
+  updatePresenceHumanSimulated();
 
-  // Her 10 dakikada bir durumu yenile (Discord reset atarsa korur)
-  setInterval(updatePresence, 10 * 60 * 1000);
+  // Her 15 dakikada bir insan taklidi durumunu kontrol et ve güncelle
+  setInterval(updatePresenceHumanSimulated, 15 * 60 * 1000);
 });
 
 client.on('disconnect', () => {
@@ -405,7 +518,7 @@ client.on('error', (err) => {
 });
 
 // -------------------------------------------------------------
-// 5. ÇÖKMELERİ ENGELLEYEN SİSTEM KORUYUCULARI
+// 6. ÇÖKMELERİ ENGELLEYEN SİSTEM KORUYUCULARI
 // -------------------------------------------------------------
 process.on('uncaughtException', (err) => {
   console.error('[SİSTEM HATA - Uncaught Exception]', err.message);
