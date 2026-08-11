@@ -5,9 +5,6 @@ const helmet = require('helmet');
 const axios = require('axios');
 const commandHandler = require('./commandHandler');
 
-// User Token Client (discord.js-selfbot-v13)
-const { Client: UserClient } = require('discord.js-selfbot-v13');
-
 // Bot Token Client (discord.js v14)
 const {
   Client: BotClient,
@@ -30,9 +27,6 @@ const fallbackGroqKey = 'YTE8tcgFMbn1YtHDLvFTEw7WYF3bydGWwFCLy66KOFiYjRQIAV4w_ks
 const GROQ_API_KEY = process.env.GROQTOKEN || process.env.GROQ_TOKEN || process.env.GROQ_API_KEY || fallbackGroqKey;
 
 const EKO_USER_ID = process.env.EKO_USER_ID || '1031620522406072350';
-const USER_TOKEN_ID = '1536860347082866831';
-const IDLE_REMOVE_ROLE_ID = '1518692384035311707';
-const USER_TOKEN = process.env.TOKEN || process.env.USER_TOKEN;
 const BOT_TOKEN = process.env.BOTTOKEN || process.env.BOT_TOKEN;
 
 const startTime = Date.now();
@@ -164,20 +158,18 @@ Eğer kullanıcı henüz konu belirtmediyse rezervasyon etiketi koyma, sohbeti s
       );
 
       if (response && response.data?.choices?.[0]?.message?.content) {
-        break; // Başarılı model bulundu, döngüden çık
+        break;
       }
     } catch (err) {
       lastError = err;
       const errCode = err?.response?.data?.error?.code;
       const status = err?.response?.status;
 
-      // Rate Limit (429) veya model sınırı dolduysa sonraki modele geç
       if (status === 429 || errCode === 'rate_limit_exceeded' || errCode === 'model_not_found') {
         console.warn(`[GROQ AI LİMİT] ${model} modelinin sınırı doldu/hata verdi. Sonraki modele geçiliyor...`);
         continue;
       }
 
-      // API Key hatasında diğer modeller de çalışmayacağı için döngüyü kır
       if (errCode === 'invalid_api_key') {
         break;
       }
@@ -199,7 +191,6 @@ Eğer kullanıcı henüz konu belirtmediyse rezervasyon etiketi koyma, sohbeti s
     return { reply: cleanReply, reservationTopic };
   }
 
-  // Tüm modeller başarısız olduğunda yedek otomatik rezervasyon köprüsü
   const isInvalidKey = lastError?.response?.data?.error?.code === 'invalid_api_key';
   if (!isInvalidKey && lastError) {
     console.error('[GROQ AI HATA]', lastError?.response?.data || lastError.message);
@@ -215,186 +206,8 @@ Eğer kullanıcı henüz konu belirtmediyse rezervasyon etiketi koyma, sohbeti s
   };
 }
 
-
 // -------------------------------------------------------------
-// DISCORD SELFBOT CLIENT (USER TOKEN - 7/24 AKTİF HESAP)
-// -------------------------------------------------------------
-const userClient = new UserClient({
-  checkUpdate: false,
-  ws: {
-    properties: {
-      os: 'Windows',
-      browser: 'Discord Client',
-      release_channel: 'stable',
-      client_version: '1.0.9015',
-      os_version: '10.0.19045',
-      device: ''
-    }
-  }
-});
-
-let currentHumanMode = 'ONLINE (İnsan Taklidi Aktif)';
-let lastAppliedStatus = null;
-
-async function getEkoStatus() {
-  // 1. User Client Arkadaş Listesi & Presence Cache
-  try {
-    if (userClient && userClient.user) {
-      const userPresence = userClient.presences?.cache?.get(EKO_USER_ID);
-      if (userPresence && userPresence.status) {
-        return userPresence.status;
-      }
-      if (userClient.relationships && userClient.relationships.cache) {
-        const friend = userClient.relationships.cache.get(EKO_USER_ID);
-        if (friend && friend.presence && friend.presence.status) {
-          return friend.presence.status;
-        }
-      }
-    }
-  } catch (e) { }
-
-  // 2. Bot Client Presences Önbelleği ve Üye Sorgusu
-  try {
-    if (botClient && botClient.user && botClient.guilds) {
-      for (const guild of botClient.guilds.cache.values()) {
-        const p = guild.presences.cache.get(EKO_USER_ID);
-        if (p && p.status) {
-          return p.status;
-        }
-
-        try {
-          const m = await guild.members.fetch({ user: EKO_USER_ID, withPresences: true }).catch(() => null);
-          if (m && m.presence && m.presence.status) {
-            return m.presence.status;
-          }
-        } catch (e) { }
-      }
-    }
-  } catch (e) { }
-
-  // 3. User Client Sunucu Üyesi Sorgusu
-  try {
-    if (userClient && userClient.user && userClient.guilds) {
-      for (const guild of userClient.guilds.cache.values()) {
-        const p = guild.presences.cache.get(EKO_USER_ID);
-        if (p && p.status) {
-          return p.status;
-        }
-        try {
-          const m = await guild.members.fetch({ user: EKO_USER_ID, withPresences: true }).catch(() => null);
-          if (m && m.presence && m.presence.status) {
-            return m.presence.status;
-          }
-        } catch (e) { }
-      }
-    }
-  } catch (e) { }
-
-  return 'offline';
-}
-
-async function manageUserTokenRole(shouldHaveRole) {
-  if (!botClient || !botClient.user) return;
-  try {
-    for (const guild of botClient.guilds.cache.values()) {
-      try {
-        const member = await guild.members.fetch(USER_TOKEN_ID).catch(() => null);
-        if (!member) continue;
-
-        const hasRole = member.roles.cache.has(IDLE_REMOVE_ROLE_ID);
-        if (!shouldHaveRole && hasRole) {
-          await member.roles.remove(IDLE_REMOVE_ROLE_ID).catch((err) => {
-            console.error(`[ROL ALMA HATASI] ${guild.name} sunucusunda rol alınamadı:`, err.message);
-          });
-          console.log(`[ROL GÜNCELLEMESİ] Eko Boşta -> ${member.user.tag} kullanıcısından ${IDLE_REMOVE_ROLE_ID} rolü alındı.`);
-        } else if (shouldHaveRole && !hasRole) {
-          await member.roles.add(IDLE_REMOVE_ROLE_ID).catch((err) => {
-            console.error(`[ROL VERME HATASI] ${guild.name} sunucusunda rol verilemedi:`, err.message);
-          });
-          console.log(`[ROL GÜNCELLEMESİ] Eko Boşta Değil (Görünmez/Aktif/Çevrim Dışı) -> ${member.user.tag} kullanıcısına ${IDLE_REMOVE_ROLE_ID} rolü geri verildi.`);
-        }
-      } catch (e) { }
-    }
-  } catch (e) { }
-}
-
-async function updatePresenceHumanSimulated() {
-  if (!userClient || !userClient.user) return;
-  try {
-    const ekoStatus = await getEkoStatus();
-    let targetStatus = 'online';
-
-    // Kural 1: Eko çevrim dışı (offline/invisible) ise -> User Token 'idle' (boşta)
-    if (ekoStatus === 'offline' || ekoStatus === 'invisible') {
-      targetStatus = 'idle';
-      currentHumanMode = 'IDLE (Eko Çevrim Dışı/Görünmez -> User Token Boşta)';
-      await manageUserTokenRole(true);
-    }
-    // Kural 2: Eko 'idle' (boşta) ise -> User Token 'invisible' (görünmez) ve Rolü Al
-    else if (ekoStatus === 'idle') {
-      targetStatus = 'invisible';
-      currentHumanMode = 'INVISIBLE (Eko Boşta -> User Token Görünmez)';
-      await manageUserTokenRole(false);
-    }
-    // Kural 3: Eko 'online' / 'dnd' ise -> User Token 'online' ve Rolü Geri Ver
-    else {
-      targetStatus = 'online';
-      currentHumanMode = 'ONLINE (Eko Çevrim İçi -> User Token Aktif)';
-      await manageUserTokenRole(true);
-    }
-
-    if (lastAppliedStatus !== targetStatus) {
-      lastAppliedStatus = targetStatus;
-      console.log(`[DURUM GÜNCELLEMESİ] Eko Durumu: [${ekoStatus.toUpperCase()}] -> User Token Yeni Durumu: [${targetStatus.toUpperCase()}]`);
-    }
-
-    try {
-      if (targetStatus === 'invisible') {
-        userClient.user.setPresence({
-          status: 'invisible',
-          activities: []
-        });
-      } else {
-        userClient.user.setPresence({
-          status: targetStatus,
-          activities: [{
-            name: 'Eko Yıldız youtube kanalına abone ol!',
-            type: 'STREAMING',
-            url: 'https://www.youtube.com/@eko8yildiz'
-          }]
-        });
-      }
-    } catch (e) { }
-  } catch (err) {
-    console.error('[USER PRESENCE HATA]', err.message);
-  }
-}
-
-userClient.on('ready', async () => {
-  console.log(`====================================================`);
-  console.log(`[USER TOKEN AKTİF] Giriş Yapıldı: ${userClient.user.tag}`);
-  console.log(`[ANTI-DETECTION] Windows Client Taklidi Aktif.`);
-  console.log(`====================================================`);
-  try {
-    await userClient.users.fetch(EKO_USER_ID).catch(() => { });
-  } catch (e) { }
-
-  await updatePresenceHumanSimulated();
-  setInterval(updatePresenceHumanSimulated, 10 * 1000);
-});
-
-userClient.on('presenceUpdate', async (oldPresence, newPresence) => {
-  const uId = newPresence?.userId || newPresence?.user?.id || oldPresence?.userId || oldPresence?.user?.id;
-  if (uId === EKO_USER_ID) {
-    await updatePresenceHumanSimulated();
-  }
-});
-
-userClient.on('error', (err) => console.error('[USER CLIENT HATA]', err.message));
-
-
-// -------------------------------------------------------------
-// DISCORD BOT CLIENT (BOT TOKEN - İNTERAKTİF SİSTEM)
+// DISCORD BOT CLIENT (BOT TOKEN - İNTERAKTİF VE HIZLI SİSTEM)
 // -------------------------------------------------------------
 const botClient = new BotClient({
   intents: [
@@ -407,18 +220,11 @@ const botClient = new BotClient({
   partials: [Partials.Channel, Partials.Message]
 });
 
-botClient.on('presenceUpdate', (oldPresence, newPresence) => {
-  if (newPresence && (newPresence.userId === EKO_USER_ID || newPresence.user?.id === EKO_USER_ID)) {
-    updatePresenceHumanSimulated();
-  }
-});
-
-
 // -------------------------------------------------------------
 // REZERVASYON VE CANLI SOHBET YÖNETİMİ
 // -------------------------------------------------------------
 
-// Bot Token üzerinden Eko'ya Mesaj İletimi
+// Bot üzerinden Eko'ya Mesaj İletimi
 async function relayMessageToEko(msg, headerPrefix = '') {
   try {
     const ekoUser = await botClient.users.fetch(EKO_USER_ID);
@@ -458,24 +264,10 @@ async function relayMessageToEko(msg, headerPrefix = '') {
   }
 }
 
-// Diğer Tüm Kullanıcılara KULLANICI TOKENİ (Selfbot) Üzerinden Mesaj İletimi
-async function sendUserTokenDM(targetUserId, messageObjOrText) {
+// Kullanıcılara BOT Üzerinden Hızlı DM İletimi
+async function sendBotDM(targetUserId, messageObjOrText) {
   try {
-    if (!userClient.user) {
-      // Eğer User Token bağlı değilse yedek olarak Bot Token kullan
-      const targetUser = await botClient.users.fetch(targetUserId);
-      if (targetUser) {
-        if (typeof messageObjOrText === 'string') {
-          await targetUser.send(messageObjOrText);
-        } else {
-          await targetUser.send({ content: messageObjOrText.content || '', files: messageObjOrText.attachments?.map(a => a.url) });
-        }
-        return true;
-      }
-      return false;
-    }
-
-    const targetUser = await userClient.users.fetch(targetUserId);
+    const targetUser = await botClient.users.fetch(targetUserId);
     if (!targetUser) return false;
 
     if (typeof messageObjOrText === 'string') {
@@ -485,7 +277,6 @@ async function sendUserTokenDM(targetUserId, messageObjOrText) {
       return true;
     }
 
-    // Mesaj Objesi (Metin, Markdown, Dosya ekleri, Yanıtlar)
     const msg = messageObjOrText;
     const options = { content: msg.content || '' };
 
@@ -511,24 +302,12 @@ async function sendUserTokenDM(targetUserId, messageObjOrText) {
     resetActiveChatTimeout();
     return true;
   } catch (err) {
-    console.error('[USER TOKEN DM HATA]', err.message);
-    // Hata durumunda yedek olarak Bot Token kullan
-    try {
-      const targetUser = await botClient.users.fetch(targetUserId);
-      if (targetUser) {
-        if (typeof messageObjOrText === 'string') {
-          await targetUser.send(messageObjOrText);
-        } else {
-          await targetUser.send({ content: messageObjOrText.content || '', files: messageObjOrText.attachments?.map(a => a.url) });
-        }
-        return true;
-      }
-    } catch (e) { }
+    console.error('[BOT DM HATASI]', err.message);
+    return false;
   }
-  return false;
 }
 
-// Eko'ya Sadece Bot Üzerinden Bildirim Gönderimi
+// Eko'ya Bildirim Gönderimi
 async function promptEkoQueue() {
   try {
     const ekoUser = await botClient.users.fetch(EKO_USER_ID);
@@ -594,14 +373,11 @@ async function promptEkoQueue() {
 }
 
 // -------------------------------------------------------------
-// ORTAK DM İŞLEME MERKEZİ
+// DM İŞLEME MERKEZİ
 // -------------------------------------------------------------
-async function handleIncomingDM(clientType, message) {
-  const isUserClient = (clientType === 'USER');
-  const selfUser = isUserClient ? userClient.user : botClient.user;
-
-  if (!selfUser) return;
-  if (message.author.id === selfUser.id) return;
+async function handleIncomingDM(message) {
+  if (!botClient.user) return;
+  if (message.author.id === botClient.user.id) return;
   if (message.author.bot) return;
 
   const isDM = message.channel.type === 'DM' ||
@@ -618,7 +394,7 @@ async function handleIncomingDM(clientType, message) {
   // 1. AI Hafıza Sıfırlama
   if (message.content.trim() === '!sıfırla' || message.content.trim() === '!temizle') {
     aiHistories.delete(senderId);
-    await sendUserTokenDM(senderId, "🧹 Yapay zeka hafızanız sıfırlandı. Yeni bir konu hakkında konuşabilirsiniz.");
+    await sendBotDM(senderId, "🧹 Yapay zeka hafızanız sıfırlandı. Yeni bir konu hakkında konuşabilirsiniz.");
     return;
   }
 
@@ -628,16 +404,15 @@ async function handleIncomingDM(clientType, message) {
     if (wasPending) {
       reservationQueue = reservationQueue.filter(q => q.userId !== senderId);
       aiHistories.delete(senderId);
-      await sendUserTokenDM(senderId, "✅ Rezervasyon talebiniz başarıyla iptal edildi. İstediğiniz zaman tekrar yazabilirsiniz.");
+      await sendBotDM(senderId, "✅ Rezervasyon talebiniz başarıyla iptal edildi. İstediğiniz zaman tekrar yazabilirsiniz.");
     } else {
-      await sendUserTokenDM(senderId, "ℹ️ Şu anda bekleyen bir rezervasyon talebiniz bulunmuyor.");
+      await sendBotDM(senderId, "ℹ️ Şu anda bekleyen bir rezervasyon talebiniz bulunmuyor.");
     }
     return;
   }
 
   // 3. Aktif Canlı Sohbet Var mı?
   if (activeChat) {
-    // 3A. Kullanıcı Eko'ya yazıyor -> Eko'ya BOT ÜZERİNDEN ilet!
     if (senderId === activeChat.userId) {
       try {
         const header = `💬 **[${senderTag}]:**`;
@@ -648,7 +423,6 @@ async function handleIncomingDM(clientType, message) {
       return;
     }
 
-    // 3B. Eko Kullanıcıya yazıyor -> Kullanıcıya KULLANICI TOKENİ ÜZERİNDEN ilet!
     if (senderId === EKO_USER_ID) {
       if (message.content.trim().toLowerCase() === '!bitir') {
         await endActiveChat('Eko konuşmayı sonlandırdı.');
@@ -656,7 +430,7 @@ async function handleIncomingDM(clientType, message) {
       }
 
       try {
-        await sendUserTokenDM(activeChat.userId, message);
+        await sendBotDM(activeChat.userId, message);
       } catch (err) {
         console.error('[KULLANICIYA İLETİM HATA]', err.message);
       }
@@ -664,7 +438,7 @@ async function handleIncomingDM(clientType, message) {
     }
   }
 
-  // 4. Eko Admin Komutları (Sadece Eko'ya Bot Üzerinden Yanıt)
+  // 4. Eko Admin Komutları
   if (senderId === EKO_USER_ID) {
     const cmd = message.content.trim().toLowerCase();
 
@@ -738,16 +512,16 @@ async function handleIncomingDM(clientType, message) {
     }
   }
 
-  // 5. Kullanıcı Kuyrukta Zaten Bekliyor mu? -> Kullanıcıya KULLANICI TOKENİ ÜZERİNDEN ilet!
+  // 5. Kullanıcı Kuyrukta Zaten Bekliyor mu?
   const existingPending = reservationQueue.find(q => q.userId === senderId && q.status === 'pending');
   if (existingPending) {
     if (!autoReplyPaused) {
-      await sendUserTokenDM(senderId, "⏳ Rezervasyon talebiniz zaten alındı ve Eko'ya iletildi. Eko uygun olduğunda sizinle iletişime geçecektir. İptal etmek isterseniz '!iptal' yazabilirsiniz.");
+      await sendBotDM(senderId, "⏳ Rezervasyon talebiniz zaten alındı ve Eko'ya iletildi. Eko uygun olduğunda sizinle iletişime geçecektir. İptal etmek isterseniz '!iptal' yazabilirsiniz.");
     }
     return;
   }
 
-  // 6. Yeni Kullanıcı - Groq AI Yanıtı -> Kullanıcıya KULLANICI TOKENİ ÜZERİNDEN ilet!
+  // 6. Yeni Kullanıcı - Groq AI Yanıtı
   if (autoReplyPaused) {
     console.log(`[OTOMATİK YANIT PAUSED] ${senderTag} (${senderId}) mesaj gönderdi ancak !durma aktif olduğu için yanıt verilmedi.`);
     return;
@@ -770,20 +544,17 @@ async function handleIncomingDM(clientType, message) {
 
     console.log(`[REZERVASYON OLUŞTU] Kullanıcı: ${senderTag} | Konu: ${aiResult.reservationTopic}`);
 
-    // Kullanıcıya mesaj tamamen Kullanıcı Tokeni üzerinden gitsin
-    await sendUserTokenDM(senderId, (aiResult.reply || "Talebiniz Eko'ya iletildi!") + "\n\n*(İptal etmek isterseniz '!iptal' yazabilirsiniz)*");
-
-    // Eko'ya bildirim SADECE BOT ÜZERİNDEN gitsin
+    await sendBotDM(senderId, (aiResult.reply || "Talebiniz Eko'ya iletildi!") + "\n\n*(İptal etmek isterseniz '!iptal' yazabilirsiniz)*");
     await promptEkoQueue();
   } else {
     if (aiResult.reply) {
-      await sendUserTokenDM(senderId, aiResult.reply);
+      await sendBotDM(senderId, aiResult.reply);
     }
   }
 }
 
 // -------------------------------------------------------------
-// EVENT DİNLEYİCİLERİ
+// EVENT DİNLEYİCİLERİ VE ULTRA HIZLI KOMUT YÖNLENDİRİCİSİ
 // -------------------------------------------------------------
 botClient.on('ready', () => {
   console.log(`====================================================`);
@@ -792,37 +563,36 @@ botClient.on('ready', () => {
   console.log(`====================================================`);
 });
 
-botClient.on('messageCreate', async (message) => {
-  if (message.author && message.author.id === EKO_USER_ID) {
-    const rawCmd = message.content.trim().toLowerCase();
+botClient.on('messageCreate', (message) => {
+  if (!message.author || message.author.bot) return;
+
+  const content = message.content ? message.content.trim() : '';
+
+  // Hızlı Öncelikli Yol: e! komutları anında çalıştırılır
+  if (content.toLowerCase().startsWith('e!')) {
+    commandHandler.handleGuildMessage(message);
+    return;
+  }
+
+  // Eko Admin Komutları (!durma / !basslatma)
+  if (message.author.id === EKO_USER_ID) {
+    const rawCmd = content.toLowerCase();
     if (rawCmd === '!durma') {
       autoReplyPaused = true;
-      await message.reply('🛑 **Tüm otomatik selamlar, yapay zeka yanıtları ve karşılamalar durduruldu.**');
+      message.reply('🛑 **Tüm otomatik selamlar, yapay zeka yanıtları ve karşılamalar durduruldu.**');
       return;
     }
     if (rawCmd === '!basslatma' || rawCmd === '!baslatma' || rawCmd === '!başlatma') {
       autoReplyPaused = false;
-      await message.reply('▶️ **Tüm otomatik selamlar, yapay zeka yanıtları ve karşılamalar tekrar başlatıldı.**');
+      message.reply('▶️ **Tüm otomatik selamlar, yapay zeka yanıtları ve karşılamalar tekrar başlatıldı.**');
       return;
     }
   }
 
-  const isCommand = message.content && message.content.trim().toLowerCase().startsWith('e!');
-  if (isCommand) {
-    await commandHandler.handleGuildMessage(message);
-  } else if (message.guild) {
-    await commandHandler.handleGuildMessage(message);
+  if (message.guild) {
+    commandHandler.handleGuildMessage(message);
   } else {
-    await handleIncomingDM('BOT', message);
-  }
-});
-
-userClient.on('messageCreate', async (message) => {
-  const isCommand = message.content && message.content.trim().toLowerCase().startsWith('e!');
-  if (isCommand) {
-    await commandHandler.handleGuildMessage(message);
-  } else {
-    await handleIncomingDM('USER', message);
+    handleIncomingDM(message);
   }
 });
 
@@ -834,10 +604,8 @@ async function endActiveChat(reason = 'Konuşma sonlandırıldı.') {
   const endedUser = activeChat;
   activeChat = null;
 
-  // Kullanıcıya bildirim KULLANICI TOKENİ üzerinden gitsin
-  await sendUserTokenDM(endedUser.userId, `🔒 **Eko ile konuşmanız sonlandırıldı.**\n*Nedeni:* ${reason}\nZaman ayırdığınız için teşekkür ederiz!`);
+  await sendBotDM(endedUser.userId, `🔒 **Eko ile konuşmanız sonlandırıldı.**\n*Nedeni:* ${reason}\nZaman ayırdığınız için teşekkür ederiz!`);
 
-  // Eko'ya bildirim SADECE BOT ÜZERİNDEN gitsin
   try {
     const ekoUser = await botClient.users.fetch(EKO_USER_ID);
     if (ekoUser) {
@@ -915,8 +683,7 @@ botClient.on('interactionCreate', async (interaction) => {
       components: []
     });
 
-    // Kullanıcıya red bildirimi KULLANICI TOKENİ ÜZERİNDEN gitsin
-    await sendUserTokenDM(selectedUserId, "Eko sizinle konuşmayı reddeti.");
+    await sendBotDM(selectedUserId, "Eko sizinle konuşmayı reddetti.");
 
     await promptEkoQueue();
     return;
@@ -969,23 +736,20 @@ async function startChatWithUser(interaction, targetUserId) {
     });
   }
 
-  // Bekleyen diğer kullanıcılara bildirim KULLANICI TOKENİ ÜZERİNDEN gitsin
   const remainingPending = reservationQueue.filter(q => q.status === 'pending');
   for (const pendingUser of remainingPending) {
-    await sendUserTokenDM(pendingUser.userId, "Eko aktif oldu. Şuanda birisiyle konuşma sağlıyor. Sizinle birazdan konuşacak hazırlanınız.");
+    await sendBotDM(pendingUser.userId, "Eko aktif oldu. Şuanda birisiyle konuşma sağlıyor. Sizinle birazdan konuşacak hazırlanınız.");
   }
 
-  // Seçilen kullanıcıya kabul bildirimi KULLANICI TOKENİ ÜZERİNDEN gitsin
-  await sendUserTokenDM(targetItem.userId, `🎉 **Eko görüşme talebinizi kabul etti!**\nŞu andan itibaren yazacağınız mesajlar doğrudan Eko'ya iletilecektir. Konuşabilirsiniz!`);
+  await sendBotDM(targetItem.userId, `🎉 **Eko görüşme talebinizi kabul etti!**\nŞu andan itibaren yazacağınız mesajlar doğrudan Eko'ya iletilecektir. Konuşabilirsiniz!`);
 }
 
 // -------------------------------------------------------------
 // WEB DASHBOARD VE KONTROL PANELİ
 // -------------------------------------------------------------
 app.get('/', (req, res) => {
-  const userTag = userClient.user ? userClient.user.tag : 'Bağlanıyor...';
   const botTag = botClient.user ? botClient.user.tag : 'Bağlanıyor...';
-  const avatarUrl = userClient.user ? userClient.user.displayAvatarURL({ dynamic: true }) : 'https://cdn.discordapp.com/embed/avatars/0.png';
+  const avatarUrl = botClient.user ? botClient.user.displayAvatarURL({ dynamic: true }) : 'https://cdn.discordapp.com/embed/avatars/0.png';
 
   const pendingCount = reservationQueue.filter(q => q.status === 'pending').length;
   const activeName = activeChat ? activeChat.username : 'Yok (Boşta)';
@@ -996,7 +760,7 @@ app.get('/', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Eko Yıldız | 7/24 Groq AI & Canlı Sohbet Sistemi</title>
+  <title>Eko Yıldız | 7/24 Groq AI & Canlı Sohbet Botu</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;900&display=swap" rel="stylesheet">
@@ -1105,7 +869,6 @@ app.get('/', (req, res) => {
     }
     .shield-groq { background: rgba(139, 92, 246, 0.2); border: 1px solid rgba(139, 92, 246, 0.4); color: #c084fc; }
     .shield-bot { background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.4); color: #60a5fa; }
-    .shield-user { background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; }
 
     .stats-grid {
       display: grid;
@@ -1152,13 +915,12 @@ app.get('/', (req, res) => {
         <div class="status-indicator"></div>
       </div>
       <div class="title">Eko Yıldız AI & Canlı Sohbet Sistemi</div>
-      <div class="subtitle">Bot: ${botTag} | User: ${userTag}</div>
+      <div class="subtitle">Bot: ${botTag}</div>
     </div>
 
     <div class="shields-wrapper">
       <div class="shield-badge shield-groq">🤖 GROQ AI (llama-3.3-70b)</div>
-      <div class="shield-badge shield-bot">⚡ BOT TOKEN AKTİF</div>
-      <div class="shield-badge shield-user">🔒 USER TOKEN 7/24 AKTİF</div>
+      <div class="shield-badge shield-bot">⚡ BOT TOKEN AKTİF & HIZLI KOMUTLAR</div>
     </div>
 
     <div class="stats-grid">
@@ -1200,7 +962,6 @@ app.get('/health', cronPingLimiter, (req, res) => {
     status: 'ok',
     autoReplyPaused: autoReplyPaused,
     botUser: botClient.user ? botClient.user.tag : 'offline',
-    selfUser: userClient.user ? userClient.user.tag : 'offline',
     activeChat: activeChat ? activeChat.username : null,
     pendingQueueCount: reservationQueue.filter(q => q.status === 'pending').length,
     blacklistCount: blacklist.size,
@@ -1234,16 +995,9 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('[UNHANDLED REJECTION]', reason);
 });
 
-// 1. Bot Token Girişi
+// Bot Token Girişi
 if (BOT_TOKEN) {
   botClient.login(BOT_TOKEN).catch(err => console.error('[BOT LOGIN HATA]', err.message));
 } else {
   console.warn('[UYARI] .env içinde BOTTOKEN bulunamadı!');
-}
-
-// 2. User Token Girişi
-if (USER_TOKEN) {
-  userClient.login(USER_TOKEN).catch(err => console.error('[USER LOGIN HATA]', err.message));
-} else {
-  console.warn('[UYARI] .env içinde TOKEN bulunamadı!');
 }

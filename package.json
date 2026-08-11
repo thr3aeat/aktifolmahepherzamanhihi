@@ -1,7 +1,7 @@
 {
   "name": "render-724-active-token",
   "version": "1.0.0",
-  "description": "Discord User Token 7/24 Aktif Tutma Scripti (Render Compatible)",
+  "description": "EkoYıldız 7/24 Groq AI & Rezervasyon Discord Botu",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
