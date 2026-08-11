@@ -189,67 +189,94 @@ const userClient = new UserClient({
 });
 
 let currentHumanMode = 'ONLINE (İnsan Taklidi Aktif)';
+let lastAppliedStatus = null;
 
-function getEkoStatus() {
-  if (userClient && userClient.user) {
-    const user = userClient.users.cache.get(EKO_USER_ID);
-    if (user && user.presence && user.presence.status) {
-      return user.presence.status;
+async function getEkoStatus() {
+  // 1. User Client Arkadaş Listesi Presences
+  try {
+    if (userClient && userClient.user && userClient.relationships && userClient.relationships.cache) {
+      const friend = userClient.relationships.cache.get(EKO_USER_ID);
+      if (friend && friend.presence && friend.presence.status) {
+        return friend.presence.status;
+      }
     }
-    if (userClient.guilds && userClient.guilds.cache) {
-      for (const guild of userClient.guilds.cache.values()) {
-        const member = guild.members.cache.get(EKO_USER_ID);
-        if (member && member.presence && member.presence.status) {
-          return member.presence.status;
+  } catch (e) {}
+
+  // 2. Bot Client Presences Önbelleği ve Üye Sorgusu
+  try {
+    if (botClient && botClient.user && botClient.guilds) {
+      for (const guild of botClient.guilds.cache.values()) {
+        const p = guild.presences.cache.get(EKO_USER_ID);
+        if (p && p.status) {
+          return p.status;
         }
-      }
-    }
-  }
 
-  if (botClient && botClient.user && botClient.guilds && botClient.guilds.cache) {
-    for (const guild of botClient.guilds.cache.values()) {
-      const member = guild.members.cache.get(EKO_USER_ID);
-      if (member && member.presence && member.presence.status) {
-        return member.presence.status;
+        try {
+          const m = await guild.members.fetch({ user: EKO_USER_ID, withPresences: true }).catch(() => null);
+          if (m && m.presence && m.presence.status) {
+            return m.presence.status;
+          }
+        } catch (e) {}
       }
     }
-  }
+  } catch (e) {}
+
+  // 3. User Client Sunucu Üyesi Sorgusu
+  try {
+    if (userClient && userClient.user && userClient.guilds) {
+      for (const guild of userClient.guilds.cache.values()) {
+        try {
+          const m = await guild.members.fetch({ user: EKO_USER_ID, withPresences: true }).catch(() => null);
+          if (m && m.presence && m.presence.status) {
+            return m.presence.status;
+          }
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
 
   return 'offline';
 }
 
-function updatePresenceHumanSimulated() {
+async function updatePresenceHumanSimulated() {
   if (!userClient || !userClient.user) return;
   try {
-    const ekoStatus = getEkoStatus();
-    let status = 'online';
+    const ekoStatus = await getEkoStatus();
+    let targetStatus = 'online';
 
-    // Kural 1: Eko çevrim dışı (offline/invisible) ise -> User Token 'idle' (boşta) olsun
+    // Kural 1: Eko çevrim dışı (offline/invisible) ise -> User Token 'idle' (boşta)
     if (ekoStatus === 'offline' || ekoStatus === 'invisible') {
-      status = 'idle';
-      currentHumanMode = 'IDLE (Eko Çevrim Dışı Olduğu İçin Boşta)';
+      targetStatus = 'idle';
+      currentHumanMode = 'IDLE (Eko Çevrim Dışı/Görünmez -> User Token Boşta)';
     } 
-    // Kural 2: Eko 'idle' (boşta) ise -> User Token 'invisible' (görünmez) olsun
+    // Kural 2: Eko 'idle' (boşta) ise -> User Token 'invisible' (görünmez)
     else if (ekoStatus === 'idle') {
-      status = 'invisible';
-      currentHumanMode = 'INVISIBLE (Eko Boşta Olduğu İçin Görünmez)';
+      targetStatus = 'invisible';
+      currentHumanMode = 'INVISIBLE (Eko Boşta -> User Token Görünmez)';
     } 
-    // Kural 3: Eko 'online' / 'dnd' ise -> User Token 'online' (çevrim içi) olsun
+    // Kural 3: Eko 'online' / 'dnd' ise -> User Token 'online'
     else {
-      status = 'online';
-      currentHumanMode = 'ONLINE (Eko Çevrim İçi Olduğu İçin Aktif)';
+      targetStatus = 'online';
+      currentHumanMode = 'ONLINE (Eko Çevrim İçi -> User Token Aktif)';
     }
 
-    const activities = (status === 'invisible') ? [] : [{
-      name: 'Eko Yıldız youtube kanalına abone ol!',
-      type: 'STREAMING',
-      url: 'https://www.youtube.com/@eko8yildiz'
-    }];
+    if (lastAppliedStatus !== targetStatus) {
+      lastAppliedStatus = targetStatus;
+      console.log(`[DURUM GÜNCELLEMESİ] Eko Durumu: [${ekoStatus.toUpperCase()}] -> User Token Yeni Durumu: [${targetStatus.toUpperCase()}]`);
+    }
 
-    userClient.user.setPresence({
-      status: status,
-      activities: activities
-    });
+    if (targetStatus === 'invisible') {
+      await userClient.user.setStatus('invisible').catch(() => {});
+    } else {
+      await userClient.user.setPresence({
+        status: targetStatus,
+        activities: [{
+          name: 'Eko Yıldız youtube kanalına abone ol!',
+          type: 'STREAMING',
+          url: 'https://www.youtube.com/@eko8yildiz'
+        }]
+      }).catch(() => {});
+    }
   } catch (err) {
     console.error('[USER PRESENCE HATA]', err.message);
   }
@@ -264,17 +291,19 @@ userClient.on('ready', async () => {
     await userClient.users.fetch(EKO_USER_ID).catch(() => {});
   } catch (e) {}
 
-  updatePresenceHumanSimulated();
-  setInterval(updatePresenceHumanSimulated, 30 * 1000);
+  await updatePresenceHumanSimulated();
+  setInterval(updatePresenceHumanSimulated, 10 * 1000);
 });
 
-userClient.on('presenceUpdate', (oldPresence, newPresence) => {
-  if (newPresence && (newPresence.userId === EKO_USER_ID || newPresence.user?.id === EKO_USER_ID)) {
-    updatePresenceHumanSimulated();
+userClient.on('presenceUpdate', async (oldPresence, newPresence) => {
+  const uId = newPresence?.userId || newPresence?.user?.id || oldPresence?.userId || oldPresence?.user?.id;
+  if (uId === EKO_USER_ID) {
+    await updatePresenceHumanSimulated();
   }
 });
 
 userClient.on('error', (err) => console.error('[USER CLIENT HATA]', err.message));
+
 
 // -------------------------------------------------------------
 // DISCORD BOT CLIENT (BOT TOKEN - İNTERAKTİF SİSTEM)
