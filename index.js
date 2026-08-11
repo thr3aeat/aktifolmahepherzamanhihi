@@ -28,12 +28,9 @@ const PORT = process.env.PORT || 3000;
 const fallbackGroqKey = 'YTE8tcgFMbn1YtHDLvFTEw7WYF3bydGWwFCLy66KOFiYjRQIAV4w_ksg'.split('').reverse().join('');
 const GROQ_API_KEY = process.env.GROQTOKEN || process.env.GROQ_TOKEN || process.env.GROQ_API_KEY || fallbackGroqKey;
 
-
 const EKO_USER_ID = process.env.EKO_USER_ID || '1031620522406072350';
 const USER_TOKEN = process.env.TOKEN || process.env.USER_TOKEN;
 const BOT_TOKEN = process.env.BOTTOKEN || process.env.BOT_TOKEN;
-
-
 
 const startTime = Date.now();
 
@@ -247,8 +244,12 @@ const botClient = new BotClient({
 // REZERVASYON VE CANLI SOHBET YÖNETİMİ
 // -------------------------------------------------------------
 
-async function relayMessage(destinationChannelOrUser, msg, headerPrefix = '') {
+// Bot Token üzerinden Eko'ya Mesaj İletimi
+async function relayMessageToEko(msg, headerPrefix = '') {
   try {
+    const ekoUser = await botClient.users.fetch(EKO_USER_ID);
+    if (!ekoUser) return;
+
     const options = { content: '' };
     let text = msg.content || '';
 
@@ -275,18 +276,31 @@ async function relayMessage(destinationChannelOrUser, msg, headerPrefix = '') {
       return;
     }
 
-    await destinationChannelOrUser.send(options);
+    await ekoUser.send(options);
     stats.messagesBridged++;
-    
     resetActiveChatTimeout();
   } catch (err) {
-    console.error('[MESAJ İLETİM HATASI]', err.message);
+    console.error('[EKOYA İLETİM HATASI]', err.message);
   }
 }
 
+// Diğer Tüm Kullanıcılara KULLANICI TOKENİ (Selfbot) Üzerinden Mesaj İletimi
 async function sendUserTokenDM(targetUserId, messageObjOrText) {
   try {
-    if (!userClient.user) return false;
+    if (!userClient.user) {
+      // Eğer User Token bağlı değilse yedek olarak Bot Token kullan
+      const targetUser = await botClient.users.fetch(targetUserId);
+      if (targetUser) {
+        if (typeof messageObjOrText === 'string') {
+          await targetUser.send(messageObjOrText);
+        } else {
+          await targetUser.send({ content: messageObjOrText.content || '', files: messageObjOrText.attachments?.map(a => a.url) });
+        }
+        return true;
+      }
+      return false;
+    }
+
     const targetUser = await userClient.users.fetch(targetUserId);
     if (!targetUser) return false;
 
@@ -297,6 +311,7 @@ async function sendUserTokenDM(targetUserId, messageObjOrText) {
       return true;
     }
 
+    // Mesaj Objesi (Metin, Markdown, Dosya ekleri, Yanıtlar)
     const msg = messageObjOrText;
     const options = { content: msg.content || '' };
 
@@ -323,10 +338,23 @@ async function sendUserTokenDM(targetUserId, messageObjOrText) {
     return true;
   } catch (err) {
     console.error('[USER TOKEN DM HATA]', err.message);
+    // Hata durumunda yedek olarak Bot Token kullan
+    try {
+      const targetUser = await botClient.users.fetch(targetUserId);
+      if (targetUser) {
+        if (typeof messageObjOrText === 'string') {
+          await targetUser.send(messageObjOrText);
+        } else {
+          await targetUser.send({ content: messageObjOrText.content || '', files: messageObjOrText.attachments?.map(a => a.url) });
+        }
+        return true;
+      }
+    } catch (e) {}
   }
   return false;
 }
 
+// Eko'ya Sadece Bot Üzerinden Bildirim Gönderimi
 async function promptEkoQueue() {
   try {
     const ekoUser = await botClient.users.fetch(EKO_USER_ID);
@@ -392,7 +420,7 @@ async function promptEkoQueue() {
 }
 
 // -------------------------------------------------------------
-// ORTAK DM İŞLEME MERKEZİ (HEM BOT TOKEN HEM USER TOKEN UYUMU)
+// ORTAK DM İŞLEME MERKEZİ
 // -------------------------------------------------------------
 async function handleIncomingDM(clientType, message) {
   const isUserClient = (clientType === 'USER');
@@ -402,7 +430,6 @@ async function handleIncomingDM(clientType, message) {
   if (message.author.id === selfUser.id) return;
   if (message.author.bot) return;
 
-  // DM Kontrolü
   const isDM = message.channel.type === 'DM' || 
                message.channel.type === ChannelType.DM || 
                !message.guild;
@@ -417,7 +444,7 @@ async function handleIncomingDM(clientType, message) {
   // 1. AI Hafıza Sıfırlama
   if (message.content.trim() === '!sıfırla' || message.content.trim() === '!temizle') {
     aiHistories.delete(senderId);
-    await message.channel.send("🧹 Yapay zeka hafızanız sıfırlandı. Yeni bir konu hakkında konuşabilirsiniz.");
+    await sendUserTokenDM(senderId, "🧹 Yapay zeka hafızanız sıfırlandı. Yeni bir konu hakkında konuşabilirsiniz.");
     return;
   }
 
@@ -427,26 +454,27 @@ async function handleIncomingDM(clientType, message) {
     if (wasPending) {
       reservationQueue = reservationQueue.filter(q => q.userId !== senderId);
       aiHistories.delete(senderId);
-      await message.channel.send("✅ Rezervasyon talebiniz başarıyla iptal edildi. İstediğiniz zaman tekrar yazabilirsiniz.");
+      await sendUserTokenDM(senderId, "✅ Rezervasyon talebiniz başarıyla iptal edildi. İstediğiniz zaman tekrar yazabilirsiniz.");
     } else {
-      await message.channel.send("ℹ️ Şu anda bekleyen bir rezervasyon talebiniz bulunmuyor.");
+      await sendUserTokenDM(senderId, "ℹ️ Şu anda bekleyen bir rezervasyon talebiniz bulunmuyor.");
     }
     return;
   }
 
   // 3. Aktif Canlı Sohbet Var mı?
   if (activeChat) {
+    // 3A. Kullanıcı Eko'ya yazıyor -> Eko'ya BOT ÜZERİNDEN ilet!
     if (senderId === activeChat.userId) {
       try {
-        const ekoUser = await botClient.users.fetch(EKO_USER_ID);
         const header = `💬 **[${senderTag}]:**`;
-        await relayMessage(ekoUser, message, header);
+        await relayMessageToEko(message, header);
       } catch (err) {
         console.error('[EKOYA İLETİM HATA]', err.message);
       }
       return;
     }
 
+    // 3B. Eko Kullanıcıya yazıyor -> Kullanıcıya KULLANICI TOKENİ ÜZERİNDEN ilet!
     if (senderId === EKO_USER_ID) {
       if (message.content.trim().toLowerCase() === '!bitir') {
         await endActiveChat('Eko konuşmayı sonlandırdı.');
@@ -454,11 +482,7 @@ async function handleIncomingDM(clientType, message) {
       }
 
       try {
-        const sentViaUserToken = await sendUserTokenDM(activeChat.userId, message);
-        if (!sentViaUserToken) {
-          const targetUser = await botClient.users.fetch(activeChat.userId);
-          await relayMessage(targetUser, message, `👤 **[Eko]:**`);
-        }
+        await sendUserTokenDM(activeChat.userId, message);
       } catch (err) {
         console.error('[KULLANICIYA İLETİM HATA]', err.message);
       }
@@ -466,7 +490,7 @@ async function handleIncomingDM(clientType, message) {
     }
   }
 
-  // 4. Eko Admin Komutları
+  // 4. Eko Admin Komutları (Sadece Eko'ya Bot Üzerinden Yanıt)
   if (senderId === EKO_USER_ID) {
     const cmd = message.content.trim();
 
@@ -527,27 +551,14 @@ async function handleIncomingDM(clientType, message) {
     }
   }
 
-  // 5. Kullanıcı Kuyrukta Zaten Bekliyor mu?
+  // 5. Kullanıcı Kuyrukta Zaten Bekliyor mu? -> Kullanıcıya KULLANICI TOKENİ ÜZERİNDEN ilet!
   const existingPending = reservationQueue.find(q => q.userId === senderId && q.status === 'pending');
   if (existingPending) {
-    if (!isUserClient) {
-      const cancelRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`cancel_res_${senderId}`)
-          .setLabel('❌ Rezervasyonumu İptal Et')
-          .setStyle(ButtonStyle.Secondary)
-      );
-      await message.reply({
-        content: "⏳ Rezervasyon talebiniz zaten alındı ve Eko'ya iletildi. Eko uygun olduğunda sizinle iletişime geçecektir. İptal etmek isterseniz butona tıklayabilir veya '!iptal' yazabilirsiniz:",
-        components: [cancelRow]
-      });
-    } else {
-      await message.channel.send("⏳ Rezervasyon talebiniz zaten alındı ve Eko'ya iletildi. İptal etmek isterseniz '!iptal' yazabilirsiniz.");
-    }
+    await sendUserTokenDM(senderId, "⏳ Rezervasyon talebiniz zaten alındı ve Eko'ya iletildi. Eko uygun olduğunda sizinle iletişime geçecektir. İptal etmek isterseniz '!iptal' yazabilirsiniz.");
     return;
   }
 
-  // 6. Yeni Kullanıcı - Groq AI ile Yanıtla
+  // 6. Yeni Kullanıcı - Groq AI Yanıtı -> Kullanıcıya KULLANICI TOKENİ ÜZERİNDEN ilet!
   const aiResult = await queryGroqAI(senderId, senderTag, message.content);
 
   if (aiResult.reservationTopic) {
@@ -565,29 +576,14 @@ async function handleIncomingDM(clientType, message) {
 
     console.log(`[REZERVASYON OLUŞTU] Kullanıcı: ${senderTag} | Konu: ${aiResult.reservationTopic}`);
 
-    if (!isUserClient) {
-      const cancelRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`cancel_res_${senderId}`)
-          .setLabel('❌ Rezervasyonumu İptal Et')
-          .setStyle(ButtonStyle.Secondary)
-      );
-      await message.reply({
-        content: aiResult.reply || "Talebiniz Eko'ya iletildi!",
-        components: [cancelRow]
-      });
-    } else {
-      await message.channel.send((aiResult.reply || "Talebiniz Eko'ya iletildi!") + "\n\n*(İptal etmek isterseniz '!iptal' yazabilirsiniz)*");
-    }
+    // Kullanıcıya mesaj tamamen Kullanıcı Tokeni üzerinden gitsin
+    await sendUserTokenDM(senderId, (aiResult.reply || "Talebiniz Eko'ya iletildi!") + "\n\n*(İptal etmek isterseniz '!iptal' yazabilirsiniz)*");
 
+    // Eko'ya bildirim SADECE BOT ÜZERİNDEN gitsin
     await promptEkoQueue();
   } else {
     if (aiResult.reply) {
-      if (!isUserClient) {
-        await message.reply(aiResult.reply);
-      } else {
-        await message.channel.send(aiResult.reply);
-      }
+      await sendUserTokenDM(senderId, aiResult.reply);
     }
   }
 }
@@ -602,12 +598,10 @@ botClient.on('ready', () => {
   console.log(`====================================================`);
 });
 
-// Bot DM Dinleyicisi
 botClient.on('messageCreate', async (message) => {
   await handleIncomingDM('BOT', message);
 });
 
-// User Token (Selfbot) DM Dinleyicisi
 userClient.on('messageCreate', async (message) => {
   await handleIncomingDM('USER', message);
 });
@@ -620,15 +614,10 @@ async function endActiveChat(reason = 'Konuşma sonlandırıldı.') {
   const endedUser = activeChat;
   activeChat = null;
 
-  try {
-    const userObj = await botClient.users.fetch(endedUser.userId);
-    if (userObj) {
-      await userObj.send(`🔒 **Eko ile konuşmanız sonlandırıldı.**\n*Nedeni:* ${reason}\nZaman ayırdığınız için teşekkür ederiz!`);
-    }
-  } catch (e) {
-    await sendUserTokenDM(endedUser.userId, `🔒 Eko sizinle olan konuşmayı sonlandırdı. (${reason})`);
-  }
+  // Kullanıcıya bildirim KULLANICI TOKENİ üzerinden gitsin
+  await sendUserTokenDM(endedUser.userId, `🔒 **Eko ile konuşmanız sonlandırıldı.**\n*Nedeni:* ${reason}\nZaman ayırdığınız için teşekkür ederiz!`);
 
+  // Eko'ya bildirim SADECE BOT ÜZERİNDEN gitsin
   try {
     const ekoUser = await botClient.users.fetch(EKO_USER_ID);
     if (ekoUser) {
@@ -706,14 +695,8 @@ botClient.on('interactionCreate', async (interaction) => {
       components: []
     });
 
-    try {
-      const rejectedUser = await botClient.users.fetch(selectedUserId);
-      if (rejectedUser) {
-        await rejectedUser.send("Eko sizinle konuşmayı reddeti.");
-      }
-    } catch (e) {
-      await sendUserTokenDM(selectedUserId, "Eko sizinle konuşmayı reddeti.");
-    }
+    // Kullanıcıya red bildirimi KULLANICI TOKENİ ÜZERİNDEN gitsin
+    await sendUserTokenDM(selectedUserId, "Eko sizinle konuşmayı reddeti.");
 
     await promptEkoQueue();
     return;
@@ -766,31 +749,14 @@ async function startChatWithUser(interaction, targetUserId) {
     });
   }
 
+  // Bekleyen diğer kullanıcılara bildirim KULLANICI TOKENİ ÜZERİNDEN gitsin
   const remainingPending = reservationQueue.filter(q => q.status === 'pending');
   for (const pendingUser of remainingPending) {
-    try {
-      const uObj = await botClient.users.fetch(pendingUser.userId);
-      if (uObj) {
-        const waitRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`ack_wait_${pendingUser.userId}`)
-            .setLabel('TAMAM')
-            .setStyle(ButtonStyle.Primary)
-        );
-        await uObj.send({
-          content: "Eko aktif oldu. Şuanda birisiyle konuşma sağlıyor. Sizinle birazdan konuşacak hazırlanınız.",
-          components: [waitRow]
-        });
-      }
-    } catch (e) {}
+    await sendUserTokenDM(pendingUser.userId, "Eko aktif oldu. Şuanda birisiyle konuşma sağlıyor. Sizinle birazdan konuşacak hazırlanınız.");
   }
 
-  try {
-    const activeUserObj = await botClient.users.fetch(targetItem.userId);
-    if (activeUserObj) {
-      await activeUserObj.send(`🎉 **Eko görüşme talebinizi kabul etti!**\nŞu andan itibaren yazacağınız mesajlar doğrudan Eko'ya iletilecektir. Konuşabilirsiniz!`);
-    }
-  } catch (e) {}
+  // Seçilen kullanıcıya kabul bildirimi KULLANICI TOKENİ ÜZERİNDEN gitsin
+  await sendUserTokenDM(targetItem.userId, `🎉 **Eko görüşme talebinizi kabul etti!**\nŞu andan itibaren yazacağınız mesajlar doğrudan Eko'ya iletilecektir. Konuşabilirsiniz!`);
 }
 
 // -------------------------------------------------------------
