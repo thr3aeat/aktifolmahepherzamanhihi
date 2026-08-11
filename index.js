@@ -311,7 +311,7 @@ async function manageUserTokenRole(shouldHaveRole) {
           await member.roles.add(IDLE_REMOVE_ROLE_ID).catch((err) => {
             console.error(`[ROL VERME HATASI] ${guild.name} sunucusunda rol verilemedi:`, err.message);
           });
-          console.log(`[ROL GÜNCELLEMESİ] Eko Çevrim İçi -> ${member.user.tag} kullanıcısına ${IDLE_REMOVE_ROLE_ID} rolü geri verildi.`);
+          console.log(`[ROL GÜNCELLEMESİ] Eko Boşta Değil (Görünmez/Aktif/Çevrim Dışı) -> ${member.user.tag} kullanıcısına ${IDLE_REMOVE_ROLE_ID} rolü geri verildi.`);
         }
       } catch (e) { }
     }
