@@ -92,15 +92,35 @@ function parseDuration(durationStr) {
 }
 
 // -------------------------------------------------------------
-// KOMUT TANIMLARI
+// KOMUT TANIMLARI & TÜRKÇE KARAKTER NORMALİZASYONU
 // -------------------------------------------------------------
 const commands = new Map();
 
+function normalizeCmd(str) {
+  if (!str) return '';
+  return str.toLowerCase()
+    .replace(/i̇/g, 'i')
+    .replace(/ı/g, 'i')
+    .replace(/ç/g, 'c')
+    .replace(/ğ/g, 'g')
+    .replace(/ö/g, 'o')
+    .replace(/ş/g, 's')
+    .replace(/ü/g, 'u')
+    .replace(/[^a-z0-9]/g, '');
+}
+
 function registerCommand(cmd) {
-  commands.set(cmd.name.toLowerCase(), cmd);
+  const primaryKey = cmd.name.toLowerCase();
+  const normKey = normalizeCmd(cmd.name);
+
+  commands.set(primaryKey, cmd);
+  if (normKey) commands.set(normKey, cmd);
+
   if (cmd.aliases) {
     for (const alias of cmd.aliases) {
       commands.set(alias.toLowerCase(), cmd);
+      const normAlias = normalizeCmd(alias);
+      if (normAlias) commands.set(normAlias, cmd);
     }
   }
 }
@@ -918,6 +938,7 @@ registerCommand({
 
 registerCommand({
   name: 'kaçcm',
+  aliases: ['kaccm', 'kac-cm', 'kaç-cm', 'cm'],
   category: 'Eğlence',
   description: '¯\\_(ツ)_/¯',
   userPermissions: [],
@@ -1346,14 +1367,21 @@ async function handleGuildMessage(message) {
   }
   levelData.set(levelKey, userLevel);
 
-  // 4. Komut Ön Eki Kontrolü (`e!`)
-  const prefix = 'e!';
-  if (!message.content.startsWith(prefix)) return;
+  // 4. Komut Ön Eki Kontrolü (`e!` veya `E!`)
+  const content = message.content.trim();
+  if (!content.toLowerCase().startsWith('e!')) return;
 
-  const args = message.content.slice(prefix.length).trim().split(/ +/);
-  const commandName = args.shift().toLowerCase();
+  const afterPrefix = content.slice(2).trim();
+  if (!afterPrefix) return;
 
-  const command = commands.get(commandName);
+  const args = afterPrefix.split(/ +/);
+  const rawCmd = args.shift();
+  if (!rawCmd) return;
+
+  const commandName = rawCmd.toLowerCase();
+  const normCmdName = normalizeCmd(rawCmd);
+
+  const command = commands.get(commandName) || commands.get(normCmdName);
   if (!command) return;
 
   // 5. Engellenmiş Komut Kontrolü
