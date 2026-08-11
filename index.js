@@ -163,10 +163,18 @@ Eğer kullanıcı henüz konu belirtmediyse rezervasyon etiketi koyma, sohbeti s
 
     return { reply: cleanReply, reservationTopic };
   } catch (err) {
-    console.error('[GROQ AI HATA]', err?.response?.data || err.message);
+    const isInvalidKey = err?.response?.data?.error?.code === 'invalid_api_key';
+    if (!isInvalidKey) {
+      console.error('[GROQ AI HATA]', err?.response?.data || err.message);
+    } else {
+      console.warn('[GROQ AI UYARI] Groq API Key geçersiz veya süresi dolmuş. Otomatik rezervasyon köprüsü aktif.');
+    }
+
+    const fallbackTopic = userMessage.length >= 3 ? userMessage.substring(0, 100) : "Eko ile görüşme talebi";
+
     return {
-      reply: "Merhaba! EkoYıldız ın yani ekonun kişisel hehsap dm sine hoşgeldiniz bu hesap eko ile konuşmak için rezervasyon almak için kurulmuştur. Şu anda sistem biraz yoğun, lütfen konuşmak istediğiniz konuyu yazın, Eko'ya ileteyim!",
-      reservationTopic: null
+      reply: `Merhaba! EkoYıldız ın yani ekonun kişisel hehsap dm sine hoşgeldiniz bu hesap eko ile konuşmak için rezervasyon almak için kurulmuştur.\n\nTalebiniz ("${fallbackTopic}") alındı ve Eko'ya iletildi!`,
+      reservationTopic: fallbackTopic
     };
   }
 }
