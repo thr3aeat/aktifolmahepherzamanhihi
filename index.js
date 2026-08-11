@@ -34,7 +34,6 @@ if (!GROQ_API_KEY) {
   console.log('[BILGI] GROQ_API_KEY .env içinde tanımlanmalıdır.');
 }
 
-
 const startTime = Date.now();
 
 // Hafıza & Durum Yönetimi (State Management)
@@ -56,7 +55,6 @@ const stats = {
 function resetActiveChatTimeout() {
   if (activeChatTimeout) clearTimeout(activeChatTimeout);
   
-  // 10 dakika (600.000 ms) boyunca eylem olmazsa sohbeti otomatik kapatır
   activeChatTimeout = setTimeout(async () => {
     if (activeChat) {
       console.log(`[ZAMAN AŞIMI] ${activeChat.username} ile sohbet 10 dakika inaktiflik nedeniyle kapatıldı.`);
@@ -248,7 +246,6 @@ const botClient = new BotClient({
 // REZERVASYON VE CANLI SOHBET YÖNETİMİ
 // -------------------------------------------------------------
 
-// Mesaj İletim Yardımcısı (Attachments & Replies)
 async function relayMessage(destinationChannelOrUser, msg, headerPrefix = '') {
   try {
     const options = { content: '' };
@@ -280,7 +277,6 @@ async function relayMessage(destinationChannelOrUser, msg, headerPrefix = '') {
     await destinationChannelOrUser.send(options);
     stats.messagesBridged++;
     
-    // Mesaj iletildiğinde 10 dakikalık auto-timeout sayacını sıfırla
     resetActiveChatTimeout();
   } catch (err) {
     console.error('[MESAJ İLETİM HATASI]', err.message);
@@ -366,39 +362,49 @@ async function promptEkoQueue() {
 }
 
 // -------------------------------------------------------------
-// DISCORD BOT EVENT DİNLEYİCİLERİ
+// ORTAK DM İŞLEME MERKEZİ (HEM BOT TOKEN HEM USER TOKEN UYUMU)
 // -------------------------------------------------------------
-botClient.on('ready', () => {
-  console.log(`====================================================`);
-  console.log(`[BOT TOKEN AKTİF] Giriş Yapıldı: ${botClient.user.tag}`);
-  console.log(`[REZERVASYON BOTU] Groq AI & Canlı Sohbet Köprüsü Aktif.`);
-  console.log(`====================================================`);
-});
+async function handleIncomingDM(clientType, message) {
+  const isUserClient = (clientType === 'USER');
+  const selfUser = isUserClient ? userClient.user : botClient.user;
 
-botClient.on('messageCreate', async (message) => {
+  if (!selfUser) return;
+  if (message.author.id === selfUser.id) return;
   if (message.author.bot) return;
-  if (message.channel.type !== ChannelType.DM) return;
+
+  // DM Kontrolü
+  const isDM = message.channel.type === 'DM' || 
+               message.channel.type === ChannelType.DM || 
+               !message.guild;
+  if (!isDM) return;
 
   const senderId = message.author.id;
   const senderTag = message.author.tag || message.author.username;
 
-  // -------------------------------------------------------------
-  // 0. KARALİSTE (BLACKLIST) KONTROLÜ
-  // -------------------------------------------------------------
+  // 0. Karaliste Kontrolü
   if (blacklist.has(senderId)) return;
 
-  // -------------------------------------------------------------
-  // 1. KULLANICI AI HAFIZA SIFIRLAMA KOMUTU (!sıfırla / !temizle)
-  // -------------------------------------------------------------
+  // 1. AI Hafıza Sıfırlama
   if (message.content.trim() === '!sıfırla' || message.content.trim() === '!temizle') {
     aiHistories.delete(senderId);
-    await message.reply("🧹 Yapay zeka hafızanız sıfırlandı. Yeni bir konu hakkında konuşabilirsiniz.");
+    await message.channel.send("🧹 Yapay zeka hafızanız sıfırlandı. Yeni bir konu hakkında konuşabilirsiniz.");
     return;
   }
 
-  // -------------------------------------------------------------
-  // 2. AKTİF CANLI SOHBET VAR MI?
-  // -------------------------------------------------------------
+  // 2. Kullanıcı Rezervasyon İptal Komutu (!iptal)
+  if (message.content.trim() === '!iptal') {
+    const wasPending = reservationQueue.some(q => q.userId === senderId && q.status === 'pending');
+    if (wasPending) {
+      reservationQueue = reservationQueue.filter(q => q.userId !== senderId);
+      aiHistories.delete(senderId);
+      await message.channel.send("✅ Rezervasyon talebiniz başarıyla iptal edildi. İstediğiniz zaman tekrar yazabilirsiniz.");
+    } else {
+      await message.channel.send("ℹ️ Şu anda bekleyen bir rezervasyon talebiniz bulunmuyor.");
+    }
+    return;
+  }
+
+  // 3. Aktif Canlı Sohbet Var mı?
   if (activeChat) {
     if (senderId === activeChat.userId) {
       try {
@@ -428,71 +434,60 @@ botClient.on('messageCreate', async (message) => {
     }
   }
 
-  // -------------------------------------------------------------
-  // 3. EKO ADMİN DM KOMUTLARI
-  // -------------------------------------------------------------
+  // 4. Eko Admin Komutları
   if (senderId === EKO_USER_ID) {
     const cmd = message.content.trim();
 
-    // !ban <userId>
     if (cmd.startsWith('!ban ')) {
       const targetId = cmd.split(' ')[1]?.trim();
       if (targetId) {
         blacklist.add(targetId);
-        await message.reply(`🚫 \`${targetId}\` ID'li kullanıcı karalisteye alındı.`);
+        await message.channel.send(`🚫 \`${targetId}\` ID'li kullanıcı karalisteye alındı.`);
       } else {
-        await message.reply('⚠️ Kullanım: `!ban <Kullanıcı_ID>`');
+        await message.channel.send('⚠️ Kullanım: `!ban <Kullanıcı_ID>`');
       }
       return;
     }
 
-    // !unban <userId>
     if (cmd.startsWith('!unban ')) {
       const targetId = cmd.split(' ')[1]?.trim();
       if (targetId) {
         blacklist.delete(targetId);
-        await message.reply(`✅ \`${targetId}\` ID'li kullanıcının engeli kaldırıldı.`);
+        await message.channel.send(`✅ \`${targetId}\` ID'li kullanıcının engeli kaldırıldı.`);
       } else {
-        await message.reply('⚠️ Kullanım: `!unban <Kullanıcı_ID>`');
+        await message.channel.send('⚠️ Kullanım: `!unban <Kullanıcı_ID>`');
       }
       return;
     }
 
-    // !temizlekuyruk
     if (cmd === '!temizlekuyruk') {
       reservationQueue = [];
-      await message.reply('🧹 Bekleyen tüm rezervasyon kuyruğu temizlendi.');
+      await message.channel.send('🧹 Bekleyen tüm rezervasyon kuyruğu temizlendi.');
       return;
     }
 
-    // !istatistik
     if (cmd === '!istatistik') {
       const memUsage = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
       const uptimeSec = Math.floor(process.uptime());
       const hours = Math.floor(uptimeSec / 3600);
       const mins = Math.floor((uptimeSec % 3600) / 60);
 
-      const embed = new EmbedBuilder()
-        .setTitle('📊 EkoYıldız Sistem İstatistikleri')
-        .setColor(0x8b5cf6)
-        .addFields(
-          { name: '⏱ Uptime', value: `${hours}s ${mins}d`, inline: true },
-          { name: '💾 RAM Kullanımı', value: `${memUsage} MB`, inline: true },
-          { name: '📋 Bekleyen Kuyruk', value: `${reservationQueue.filter(q => q.status === 'pending').length} kişi`, inline: true },
-          { name: '🟢 Aktif Sohbet', value: activeChat ? activeChat.username : 'Yok', inline: true },
-          { name: '🤖 AI Etkileşimi', value: `${stats.aiInteractions}`, inline: true },
-          { name: '💬 İletilen Mesaj', value: `${stats.messagesBridged}`, inline: true },
-          { name: '🚫 Karaliste Sayısı', value: `${blacklist.size} kişi`, inline: true }
-        );
+      const text = `📊 **EkoYıldız Sistem İstatistikleri**\n` +
+        `⏱ **Uptime:** ${hours}s ${mins}d\n` +
+        `💾 **RAM:** ${memUsage} MB\n` +
+        `📋 **Kuyruk:** ${reservationQueue.filter(q => q.status === 'pending').length} kişi\n` +
+        `🟢 **Aktif Sohbet:** ${activeChat ? activeChat.username : 'Yok'}\n` +
+        `🤖 **AI Etkileşimi:** ${stats.aiInteractions}\n` +
+        `💬 **İletilen Mesaj:** ${stats.messagesBridged}\n` +
+        `🚫 **Karaliste:** ${blacklist.size} kişi`;
 
-      await message.reply({ embeds: [embed] });
+      await message.channel.send(text);
       return;
     }
 
-    // !kuyruk
     if (cmd === '!kuyruk') {
       const pending = reservationQueue.filter(q => q.status === 'pending');
-      await message.reply(`📋 Bekleyen rezervasyon sayısı: **${pending.length}**`);
+      await message.channel.send(`📋 Bekleyen rezervasyon sayısı: **${pending.length}**`);
       if (pending.length > 0) {
         await promptEkoQueue();
       }
@@ -500,30 +495,29 @@ botClient.on('messageCreate', async (message) => {
     }
   }
 
-  // -------------------------------------------------------------
-  // 4. KULLANICI KUYRUKTA ZATEN BEKLİYOR MU?
-  // -------------------------------------------------------------
+  // 5. Kullanıcı Kuyrukta Zaten Bekliyor mu?
   const existingPending = reservationQueue.find(q => q.userId === senderId && q.status === 'pending');
   if (existingPending) {
-    const cancelRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`cancel_res_${senderId}`)
-        .setLabel('❌ Rezervasyonumu İptal Et')
-        .setStyle(ButtonStyle.Secondary)
-    );
-    await message.reply({
-      content: "⏳ Rezervasyon talebiniz zaten alındı ve Eko'ya iletildi. Eko uygun olduğunda sizinle iletişime geçecektir. İptal etmek isterseniz aşağıdaki butona tıklayın:",
-      components: [cancelRow]
-    });
+    if (!isUserClient) {
+      const cancelRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`cancel_res_${senderId}`)
+          .setLabel('❌ Rezervasyonumu İptal Et')
+          .setStyle(ButtonStyle.Secondary)
+      );
+      await message.reply({
+        content: "⏳ Rezervasyon talebiniz zaten alındı ve Eko'ya iletildi. Eko uygun olduğunda sizinle iletişime geçecektir. İptal etmek isterseniz butona tıklayabilir veya '!iptal' yazabilirsiniz:",
+        components: [cancelRow]
+      });
+    } else {
+      await message.channel.send("⏳ Rezervasyon talebiniz zaten alındı ve Eko'ya iletildi. İptal etmek isterseniz '!iptal' yazabilirsiniz.");
+    }
     return;
   }
 
-  // -------------------------------------------------------------
-  // 5. YENİ KULLANICI - GROQ AI İLE YANITLA
-  // -------------------------------------------------------------
+  // 6. Yeni Kullanıcı - Groq AI ile Yanıtla
   const aiResult = await queryGroqAI(senderId, senderTag, message.content);
 
-  // Rezervasyon tespit edildiyse iptal butonu ile birlikte yanıt ver
   if (aiResult.reservationTopic) {
     const newReservation = {
       id: `res_${Date.now()}`,
@@ -539,24 +533,51 @@ botClient.on('messageCreate', async (message) => {
 
     console.log(`[REZERVASYON OLUŞTU] Kullanıcı: ${senderTag} | Konu: ${aiResult.reservationTopic}`);
 
-    const cancelRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`cancel_res_${senderId}`)
-        .setLabel('❌ Rezervasyonumu İptal Et')
-        .setStyle(ButtonStyle.Secondary)
-    );
-
-    await message.reply({
-      content: aiResult.reply || "Talebiniz Eko'ya iletildi!",
-      components: [cancelRow]
-    });
+    if (!isUserClient) {
+      const cancelRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`cancel_res_${senderId}`)
+          .setLabel('❌ Rezervasyonumu İptal Et')
+          .setStyle(ButtonStyle.Secondary)
+      );
+      await message.reply({
+        content: aiResult.reply || "Talebiniz Eko'ya iletildi!",
+        components: [cancelRow]
+      });
+    } else {
+      await message.channel.send((aiResult.reply || "Talebiniz Eko'ya iletildi!") + "\n\n*(İptal etmek isterseniz '!iptal' yazabilirsiniz)*");
+    }
 
     await promptEkoQueue();
   } else {
     if (aiResult.reply) {
-      await message.reply(aiResult.reply);
+      if (!isUserClient) {
+        await message.reply(aiResult.reply);
+      } else {
+        await message.channel.send(aiResult.reply);
+      }
     }
   }
+}
+
+// -------------------------------------------------------------
+// EVENT DİNLEYİCİLERİ
+// -------------------------------------------------------------
+botClient.on('ready', () => {
+  console.log(`====================================================`);
+  console.log(`[BOT TOKEN AKTİF] Giriş Yapıldı: ${botClient.user.tag}`);
+  console.log(`[REZERVASYON BOTU] Groq AI & Canlı Sohbet Köprüsü Aktif.`);
+  console.log(`====================================================`);
+});
+
+// Bot DM Dinleyicisi
+botClient.on('messageCreate', async (message) => {
+  await handleIncomingDM('BOT', message);
+});
+
+// User Token (Selfbot) DM Dinleyicisi
+userClient.on('messageCreate', async (message) => {
+  await handleIncomingDM('USER', message);
 });
 
 async function endActiveChat(reason = 'Konuşma sonlandırıldı.') {
@@ -598,9 +619,6 @@ botClient.on('interactionCreate', async (interaction) => {
 
   const customId = interaction.customId;
 
-  // -------------------------------------------------------------
-  // KULLANICI KENDİ REZERVASYONUNU İPTAL ETME BUTONU
-  // -------------------------------------------------------------
   if (customId.startsWith('cancel_res_')) {
     const targetUserId = customId.replace('cancel_res_', '');
     
@@ -613,16 +631,13 @@ botClient.on('interactionCreate', async (interaction) => {
     aiHistories.delete(targetUserId);
 
     await interaction.update({
-      content: '✅ Rezervasyon talebiniz başarıyla iptal edildi. İstediniz zaman tekrar yazabilirsiniz.',
+      content: '✅ Rezervasyon talebiniz başarıyla iptal edildi. İstediğiniz zaman tekrar yazabilirsiniz.',
       components: [],
       embeds: []
     });
     return;
   }
 
-  // -------------------------------------------------------------
-  // TAMAM BUTONU (Sırada Bekleyen Kullanıcı Tıkladığında)
-  // -------------------------------------------------------------
   if (customId.startsWith('ack_wait_')) {
     await interaction.reply({
       content: '👍 Harika! Eko şu anki görüşmesini bitirince sıranız gelecektir. Lütfen hazırda bekleyin.',
@@ -631,7 +646,6 @@ botClient.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  // Sadece Eko'nun buton yetkisi vardır
   if (interaction.user.id !== EKO_USER_ID) {
     await interaction.reply({ content: '❌ Bu işlemi gerçekleştirmeye yetkiniz yok.', ephemeral: true });
     return;
@@ -698,7 +712,6 @@ async function startChatWithUser(interaction, targetUserId) {
 
   reservationQueue = reservationQueue.filter(q => q.userId !== targetUserId);
 
-  // 10 dakikalık auto-timeout başlat
   resetActiveChatTimeout();
 
   const endRow = new ActionRowBuilder().addComponents(
