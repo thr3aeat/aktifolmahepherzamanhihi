@@ -140,7 +140,7 @@ registerCommand({
 
     const reason = args.slice(1).join(' ') || 'Sebep belirtilmedi';
     await target.ban({ reason: `${message.author.tag} tarafından: ${reason}` });
-    
+
     const embed = new EmbedBuilder()
       .setTitle('🔨 Kullanıcı Yasaklandı')
       .setDescription(`**Yasaklanan:** ${target.user.tag} (\`${target.id}\`)\n**Yetkili:** ${message.author.tag}\n**Sebep:** ${reason}`)
@@ -272,7 +272,7 @@ registerCommand({
     const reason = args.slice(1).join(' ') || 'Sebep belirtilmedi';
     const key = `${message.guild.id}_${target.id}`;
     if (!warnData.has(key)) warnData.set(key, []);
-    
+
     const warns = warnData.get(key);
     warns.push({ reason, moderatorId: message.author.id, timestamp: Date.now() });
 
@@ -299,13 +299,13 @@ registerCommand({
       return message.reply('⚠️ Lütfen 1 ile 100 arasında silinecek mesaj sayısı belirtin (Örn: `e!temizle 20`).');
     }
 
-    await message.delete().catch(() => {});
+    await message.delete().catch(() => { });
     const deleted = await message.channel.bulkDelete(amount, true).catch(err => null);
 
     if (!deleted) return message.reply('❌ 14 günden eski mesajlar toplu silinemez.');
 
     const msg = await message.channel.send(`🧹 **${deleted.size}** adet mesaj başarıyla silindi.`);
-    setTimeout(() => msg.delete().catch(() => {}), 4000);
+    setTimeout(() => msg.delete().catch(() => { }), 4000);
   }
 });
 
@@ -433,7 +433,7 @@ registerCommand({
           await member.setNickname(`${tag} ${currentName}`);
           count++;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     return message.channel.send(`✅ Toplam **${count}** kişinin isminin başına **${tag}** eklendi.`);
@@ -462,7 +462,7 @@ registerCommand({
           await member.setNickname(newName || null);
           count++;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     return message.channel.send(`✅ Toplam **${count}** kişinin isminden **${tag}** kaldırıldı.`);
@@ -718,7 +718,7 @@ registerCommand({
 
     collector.on('collect', m => {
       const char = m.content.toUpperCase();
-      m.delete().catch(() => {});
+      m.delete().catch(() => { });
 
       if (guessed.has(char)) return;
       guessed.add(char);
@@ -879,7 +879,7 @@ registerCommand({
     const fakeText = args.slice(1).join(' ');
     if (!fakeText) return message.reply('⚠️ Lütfen sahte mesaj metnini yazın.');
 
-    await message.delete().catch(() => {});
+    await message.delete().catch(() => { });
 
     try {
       const webhook = await message.channel.createWebhook({
@@ -929,7 +929,7 @@ registerCommand({
 
     const msg = await message.reply(`💻 **${target.username}** hackleme işlemi başlatılıyor...`);
 
-    setTimeout(() => msg.edit(`🔍 IP Adresi taranıyor... \`192.168.1.${Math.floor(Math.random()*250)}\``), 1500);
+    setTimeout(() => msg.edit(`🔍 IP Adresi taranıyor... \`192.168.1.${Math.floor(Math.random() * 250)}\``), 1500);
     setTimeout(() => msg.edit(`🔐 Discord şifreleri çekiliyor...`), 3000);
     setTimeout(() => msg.edit(`📧 E-posta hesabı ele geçirildi: \`${target.username}@gmail.com\``), 4500);
     setTimeout(() => msg.edit(`🎉 **${target.username}** başarıyla HACKLENDİ! 💻💥`), 6000);
@@ -1136,7 +1136,7 @@ registerCommand({
     guildEntries.sort((a, b) => b.xp - a.xp);
     const top10 = guildEntries.slice(0, 10);
 
-    const desc = top10.length > 0 
+    const desc = top10.length > 0
       ? top10.map((e, idx) => `**${idx + 1}.** <@${e.userId}> - Level **${e.level}** (${e.xp} XP)`).join('\n')
       : 'Henüz sıralamada kimse yok.';
 
@@ -1334,6 +1334,77 @@ registerCommand({
   }
 });
 
+registerCommand({
+  name: 'sistemler',
+  aliases: ['durum', 'status', 'uptime'],
+  category: 'Kullanıcı',
+  description: 'EkoYıldız sistemlerinin (DuckDNS ve Render) aktiflik ve uptime durumunu gösterir.',
+  userPermissions: [],
+  botPermissions: [],
+  async execute(message) {
+    const axios = require('axios');
+    const loadingMsg = await message.reply('🔍 **EkoYıldız sistemleri kontrol ediliyor...**');
+
+    const services = [
+      { name: 'Sentara', url: 'https://ekoyildiz.duckdns.org/' },
+      { name: 'Sentura', url: 'https://bem-zze4.onrender.com' }
+    ];
+
+    const results = [];
+    for (const service of services) {
+      const start = Date.now();
+      try {
+        const res = await axios.get(service.url, {
+          timeout: 10000,
+          validateStatus: () => true,
+          headers: { 'User-Agent': 'EkoYildiz-Bot/1.0' }
+        });
+        const dur = Date.now() - start;
+        const isOk = res.status >= 200 && res.status < 400;
+        results.push({
+          name: service.name,
+          url: service.url,
+          ok: isOk,
+          duration: dur,
+          status: res.status
+        });
+      } catch (err) {
+        const dur = Date.now() - start;
+        results.push({
+          name: service.name,
+          url: service.url,
+          ok: false,
+          duration: dur,
+          error: err.message
+        });
+      }
+    }
+
+    const allOk = results.every(r => r.ok);
+    const uptimeSec = Math.floor(process.uptime());
+    const days = Math.floor(uptimeSec / 86400);
+    const hours = Math.floor((uptimeSec % 86400) / 3600);
+    const mins = Math.floor((uptimeSec % 3600) / 60);
+    const secs = uptimeSec % 60;
+    const uptimeText = `${days > 0 ? `${days} gün ` : ''}${hours} saat ${mins} dakika ${secs} saniye`;
+
+    const description = allOk
+      ? `:information_source: **EkoYıldız sistemleri aktif.**\n\n⏱ **Bot Uptime:** ${uptimeText}\n\n🌐 **Sistem Durumları:**\n` +
+      results.map(r => `• ${r.url} ➔ 🟢 **Aktif** (\`${r.duration}ms\`)`).join('\n')
+      : `⚠️ **Birkaç sistemde hata oluştu.. Ekibimize bu durum bildirildi. Düzeltmek için çalışıyoruz.**\n\n⏱ **Bot Uptime:** ${uptimeText}\n\n🌐 **Sistem Durumları:**\n` +
+      results.map(r => `• ${r.url} ➔ ${r.ok ? `🟢 **Aktif** (\`${r.duration}ms\`)` : `🔴 **Hata / Çevrimdışı**`}`).join('\n');
+
+    const embed = new EmbedBuilder()
+      .setTitle(allOk ? 'ℹ️ EkoYıldız Sistem Durumu' : '⚠️ Sistem Uyarısı')
+      .setColor(allOk ? 0x10b981 : 0xef4444)
+      .setDescription(description)
+      .setFooter({ text: 'EkoYıldız Sistem Takipçisi' })
+      .setTimestamp();
+
+    await loadingMsg.edit({ content: '', embeds: [embed] });
+  }
+});
+
 // -------------------------------------------------------------
 // GİLD MESAJ İŞLEYİCİ (Guild Message Handler)
 // -------------------------------------------------------------
@@ -1343,7 +1414,7 @@ async function handleGuildMessage(message) {
   // 1. AFK Kontrolü (Mesaj Yazan Kişi AFK ise kaldır)
   if (afkData.has(message.author.id)) {
     afkData.delete(message.author.id);
-    message.reply(`👋 Hoş geldin **${message.author.username}**! AFK modundan çıkış yaptın.`).then(m => setTimeout(() => m.delete().catch(() => {}), 5000));
+    message.reply(`👋 Hoş geldin **${message.author.username}**! AFK modundan çıkış yaptın.`).then(m => setTimeout(() => m.delete().catch(() => { }), 5000));
   }
 
   // 2. Etiketlenen Kişi AFK mı?

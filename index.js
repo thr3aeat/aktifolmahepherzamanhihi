@@ -27,7 +27,13 @@ const fallbackGroqKey = 'YTE8tcgFMbn1YtHDLvFTEw7WYF3bydGWwFCLy66KOFiYjRQIAV4w_ks
 const GROQ_API_KEY = process.env.GROQTOKEN || process.env.GROQ_TOKEN || process.env.GROQ_API_KEY || fallbackGroqKey;
 
 const EKO_USER_ID = process.env.EKO_USER_ID || '1031620522406072350';
+const STATUS_CHANNEL_ID = process.env.STATUS_CHANNEL_ID || '1518692466860101915';
 const BOT_TOKEN = process.env.BOTTOKEN || process.env.BOT_TOKEN;
+
+const MONITORED_SERVICES = [
+  { name: 'EkoYıldız DuckDNS', url: 'https://ekoyildiz.duckdns.org/' },
+  { name: 'BEM Render App', url: 'https://bem-zze4.onrender.com' }
+];
 
 const startTime = Date.now();
 
@@ -38,12 +44,30 @@ let activeChat = null; // null veya { userId, username, topic, startedAt }
 const blacklist = new Set(); // Karaliste User ID'leri
 let activeChatTimeout = null; // 10 Dakika Otomatik Zaman Aşımı Takibi
 let autoReplyPaused = false; // !durma ve !basslatma kontrolü
+let lastStatusMessageId = null; // İzleme kanalındaki son mesaj ID'si
+let lastSystemHealthResults = [];
 
 const stats = {
   aiInteractions: 0,
   reservationsCreated: 0,
   messagesBridged: 0
 };
+
+// Uptime Süresi Formatlayıcı (Gün, Saat, Dakika, Saniye)
+function formatUptime(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const parts = [];
+  if (days > 0) parts.push(`${days} gün`);
+  if (hours > 0 || days > 0) parts.push(`${hours} saat`);
+  if (minutes > 0 || hours > 0 || days > 0) parts.push(`${minutes} dakika`);
+  parts.push(`${seconds} saniye`);
+  return parts.join(' ');
+}
 
 // -------------------------------------------------------------
 // ZAMAN AŞIMI (AUTO-TIMEOUT) FONKSİYONLARI
@@ -207,18 +231,172 @@ Eğer kullanıcı henüz konu belirtmediyse rezervasyon etiketi koyma, sohbeti s
 }
 
 // -------------------------------------------------------------
-// DISCORD BOT CLIENT (BOT TOKEN - İNTERAKTİF VE HIZLI SİSTEM)
+// DISCORD BOT CLIENT (BOT TOKEN - GELİŞMİŞ INTENTLER & KOMUTLAR)
 // -------------------------------------------------------------
 const botClient = new BotClient({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildPresences,
+    GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.DirectMessageReactions,
     GatewayIntentBits.MessageContent
   ],
-  partials: [Partials.Channel, Partials.Message]
+  partials: [
+    Partials.Channel,
+    Partials.Message,
+    Partials.User,
+    Partials.Reaction,
+    Partials.GuildMember
+  ]
 });
+
+// -------------------------------------------------------------
+// SISTEM IZLEME & OTO-DURUM BILDIRICI (HOURLY MONITORING)
+// -------------------------------------------------------------
+async function checkServiceHealth(service) {
+  const start = Date.now();
+  try {
+    const response = await axios.get(service.url, {
+      timeout: 15000,
+      validateStatus: () => true, // 4xx ve 5xx durumlarında exception fırlatmaz
+      headers: {
+        'User-Agent': 'EkoYildiz-Monitor/1.0'
+      }
+    });
+    const duration = Date.now() - start;
+    const isOk = response.status >= 200 && response.status < 400;
+    return {
+      name: service.name,
+      url: service.url,
+      ok: isOk,
+      status: response.status,
+      duration,
+      error: isOk ? null : `HTTP ${response.status} (${response.statusText || 'Hata'})`
+    };
+  } catch (err) {
+    const duration = Date.now() - start;
+    return {
+      name: service.name,
+      url: service.url,
+      ok: false,
+      status: null,
+      duration,
+      error: err.code === 'ECONNABORTED' ? 'Zaman aşımı (Timeout > 15s)' : (err.message || 'Bağlantı hatası')
+    };
+  }
+}
+
+async function performSystemStatusCheck() {
+  if (!botClient.isReady()) return;
+
+  console.log(`[SİSTEM İZLEME] Kontroller başlatılıyor (${MONITORED_SERVICES.length} adres)...`);
+  const results = await Promise.all(MONITORED_SERVICES.map(s => checkServiceHealth(s)));
+  lastSystemHealthResults = results;
+  const allActive = results.every(r => r.ok);
+  const uptimeStr = formatUptime(Date.now() - startTime);
+  const nowUnix = Math.floor(Date.now() / 1000);
+
+  let descriptionText = '';
+  let embedColor = 0x10b981; // Yeşil
+
+  if (allActive) {
+    descriptionText = `:information_source: **EkoYıldız sistemleri aktif.**\n\n` +
+      `⏱ **Uptime (Çalışma Süresi):** ${uptimeStr}\n\n` +
+      `🌐 **Sistem Durumları:**\n` +
+      results.map(r => `• ${r.url} ➔ 🟢 **Aktif** (\`${r.duration}ms\`)`).join('\n') +
+      `\n\n🕒 *Son Güncelleme:* <t:${nowUnix}:F> (<t:${nowUnix}:R>)\n*(Bu rapor her 1 saatte bir otomatik yenilenir)*`;
+    embedColor = 0x10b981;
+  } else {
+    descriptionText = `⚠️ **Birkaç sistemde hata oluştu.. Ekibimize bu durum bildirildi. Düzeltmek için çalışıyoruz.**\n\n` +
+      `⏱ **Uptime (Çalışma Süresi):** ${uptimeStr}\n\n` +
+      `🌐 **Sistem Durumları:**\n` +
+      results.map(r => `• ${r.url} ➔ ${r.ok ? `🟢 **Aktif** (\`${r.duration}ms\`)` : `🔴 **Hata:** ${r.error}`}`).join('\n') +
+      `\n\n🕒 *Son Kontrol:* <t:${nowUnix}:F> (<t:${nowUnix}:R>)\n*(Bu rapor her 1 saatte bir otomatik yenilenir)*`;
+    embedColor = 0xef4444;
+
+    // Hatalı sistem olduğunda Eko'ya DM Gönder (ID: 1031620522406072350)
+    try {
+      const ekoUser = await botClient.users.fetch(EKO_USER_ID).catch(() => null);
+      if (ekoUser) {
+        const failedDetails = results
+          .filter(r => !r.ok)
+          .map(r => `• **${r.name}** (\`${r.url}\`)\n  └ ❌ *Hata Detayı:* \`${r.error}\``)
+          .join('\n');
+
+        const alertEmbed = new EmbedBuilder()
+          .setTitle('🚨 [SİSTEM UYARISI] EkoYıldız Sistemlerinde Arıza!')
+          .setDescription(`Merhaba Eko, yapılan otomatik kontrolde sistemlerde arıza tespit edildi:\n\n${failedDetails}\n\n📍 **Kanal Bildirimi:** <#${STATUS_CHANNEL_ID}>\n⏰ **Kontrol Zamanı:** <t:${nowUnix}:F>`)
+          .setColor(0xef4444)
+          .setTimestamp();
+
+        await ekoUser.send({ embeds: [alertEmbed] });
+        console.log(`[SİSTEM UYARI DM] ${EKO_USER_ID} ID'li kullanıcıya arıza DM bildirimi iletildi.`);
+      }
+    } catch (dmErr) {
+      console.error('[SİSTEM UYARI DM HATA]', dmErr.message);
+    }
+  }
+
+  // Discord Kanalına Mesajı Gönder veya Düzenle (Kanal: 1518692466860101915)
+  try {
+    const channel = await botClient.channels.fetch(STATUS_CHANNEL_ID).catch(() => null);
+    if (channel && channel.isTextBased()) {
+      const embed = new EmbedBuilder()
+        .setTitle(allActive ? 'ℹ️ EkoYıldız Sistem Durum Raporu' : '⚠️ EkoYıldız Sistem Arıza Uyarısı')
+        .setDescription(descriptionText)
+        .setColor(embedColor)
+        .setFooter({ text: 'EkoYıldız Otomatik İzleme Sistemi • 1 Saatte Bir Güncellenir' })
+        .setTimestamp();
+
+      let updated = false;
+
+      // 1. Kaydedilen son mesaj varsa güncelle
+      if (lastStatusMessageId) {
+        try {
+          const prevMsg = await channel.messages.fetch(lastStatusMessageId);
+          if (prevMsg) {
+            await prevMsg.edit({ embeds: [embed] });
+            updated = true;
+          }
+        } catch (e) {
+          updated = false;
+        }
+      }
+
+      // 2. Kanaldaki botun son mesajını bulup güncelle
+      if (!updated) {
+        try {
+          const recentMessages = await channel.messages.fetch({ limit: 10 });
+          const myMsg = recentMessages.find(m => m.author.id === botClient.user.id);
+          if (myMsg) {
+            await myMsg.edit({ embeds: [embed] });
+            lastStatusMessageId = myMsg.id;
+            updated = true;
+          }
+        } catch (e) {
+          updated = false;
+        }
+      }
+
+      // 3. Mesaj bulunamazsa yeni mesaj yolla
+      if (!updated) {
+        const sent = await channel.send({ embeds: [embed] });
+        lastStatusMessageId = sent.id;
+      }
+
+      console.log(`[STATUS RAPORU] Kanal (#${STATUS_CHANNEL_ID}) güncellendi. Durum: ${allActive ? 'TÜM SİSTEMLER AKTİF' : 'HATALI SİSTEM VAR'}`);
+    } else {
+      console.warn(`[STATUS UYARI] Hedef kanal (${STATUS_CHANNEL_ID}) bulunamadı veya botun yetkisi yok.`);
+    }
+  } catch (chanErr) {
+    console.error('[STATUS KANAL HATA]', chanErr.message);
+  }
+
+  return { allActive, results, uptimeStr };
+}
 
 // -------------------------------------------------------------
 // REZERVASYON VE CANLI SOHBET YÖNETİMİ
@@ -510,6 +688,13 @@ async function handleIncomingDM(message) {
       }
       return;
     }
+
+    if (cmd === '!kontrol' || cmd === '!check') {
+      await message.channel.send('🔍 **Sistem kontrolü manuel başlatılıyor...**');
+      await performSystemStatusCheck();
+      await message.channel.send('✅ Sistem durumu güncellendi.');
+      return;
+    }
   }
 
   // 5. Kullanıcı Kuyrukta Zaten Bekliyor mu?
@@ -554,13 +739,23 @@ async function handleIncomingDM(message) {
 }
 
 // -------------------------------------------------------------
-// EVENT DİNLEYİCİLERİ VE ULTRA HIZLI KOMUT YÖNLENDİRİCİSİ
+// EVENT DİNLEYİCİLERİ VE KOMUT YÖNLENDİRİCİSİ
 // -------------------------------------------------------------
 botClient.on('ready', () => {
   console.log(`====================================================`);
   console.log(`[BOT TOKEN AKTİF] Giriş Yapıldı: ${botClient.user.tag}`);
-  console.log(`[REZERVASYON BOTU] Groq AI & Canlı Sohbet Köprüsü Aktif.`);
+  console.log(`[REZERVASYON & İZLEME BOTU] Groq AI, Komutlar & Sistem Takibi Aktif.`);
   console.log(`====================================================`);
+
+  // İlk açılışta 5 saniye sonra sistemleri kontrol et ve kanala gönder
+  setTimeout(() => {
+    performSystemStatusCheck().catch(err => console.error('[İLK SİSTEM KONTROL HATASI]', err));
+  }, 5000);
+
+  // Her 1 saatte bir sistemleri kontrol et ve güncelle (1 saat = 3600000 ms)
+  setInterval(() => {
+    performSystemStatusCheck().catch(err => console.error('[SAATLİK SİSTEM KONTROL HATASI]', err));
+  }, 60 * 60 * 1000);
 });
 
 botClient.on('messageCreate', (message) => {
@@ -753,6 +948,10 @@ app.get('/', (req, res) => {
 
   const pendingCount = reservationQueue.filter(q => q.status === 'pending').length;
   const activeName = activeChat ? activeChat.username : 'Yok (Boşta)';
+  const uptimeText = formatUptime(Date.now() - startTime);
+
+  const duckdnsStatus = lastSystemHealthResults.find(r => r.url.includes('duckdns.org'));
+  const renderStatus = lastSystemHealthResults.find(r => r.url.includes('render.com'));
 
   const html = `
 <!DOCTYPE html>
@@ -760,7 +959,7 @@ app.get('/', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Eko Yıldız | 7/24 Groq AI & Canlı Sohbet Botu</title>
+  <title>Eko Yıldız | 7/24 AI Rezervasyon & Sistem İzleme Botu</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;900&display=swap" rel="stylesheet">
@@ -798,8 +997,8 @@ app.get('/', (req, res) => {
       position: relative;
       z-index: 10;
       width: 90%;
-      max-width: 720px;
-      background: rgba(15, 23, 42, 0.8);
+      max-width: 740px;
+      background: rgba(15, 23, 42, 0.85);
       backdrop-filter: blur(24px);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 28px;
@@ -869,6 +1068,7 @@ app.get('/', (req, res) => {
     }
     .shield-groq { background: rgba(139, 92, 246, 0.2); border: 1px solid rgba(139, 92, 246, 0.4); color: #c084fc; }
     .shield-bot { background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.4); color: #60a5fa; }
+    .shield-monitor { background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; }
 
     .stats-grid {
       display: grid;
@@ -884,6 +1084,43 @@ app.get('/', (req, res) => {
     }
     .stat-label { font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 600; margin-bottom: 4px; }
     .stat-value { font-size: 14px; font-weight: 700; color: #a855f7; }
+
+    .monitors-box {
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 16px;
+      margin: 15px 0 20px 0;
+      text-align: left;
+    }
+    .monitors-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #94a3b8;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .monitor-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: rgba(30, 41, 59, 0.5);
+      border-radius: 10px;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+    .monitor-name { font-weight: 600; color: #f8fafc; }
+    .monitor-url { font-size: 11px; color: #94a3b8; }
+    .badge-status {
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .badge-ok { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .badge-err { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
 
     .yt-btn {
       display: inline-flex;
@@ -914,13 +1151,14 @@ app.get('/', (req, res) => {
         <img class="avatar" src="${avatarUrl}" alt="Avatar">
         <div class="status-indicator"></div>
       </div>
-      <div class="title">Eko Yıldız AI & Canlı Sohbet Sistemi</div>
-      <div class="subtitle">Bot: ${botTag}</div>
+      <div class="title">Eko Yıldız AI & Sistem İzleme Paneli</div>
+      <div class="subtitle">Bot: ${botTag} | Uptime: ${uptimeText}</div>
     </div>
 
     <div class="shields-wrapper">
       <div class="shield-badge shield-groq">🤖 GROQ AI (llama-3.3-70b)</div>
-      <div class="shield-badge shield-bot">⚡ BOT TOKEN AKTİF & HIZLI KOMUTLAR</div>
+      <div class="shield-badge shield-bot">⚡ BOT TOKEN AKTİF</div>
+      <div class="shield-badge shield-monitor">🌐 7/24 SİSTEM İZLEME</div>
     </div>
 
     <div class="stats-grid">
@@ -939,6 +1177,31 @@ app.get('/', (req, res) => {
       <div class="stat-card">
         <div class="stat-label">İletilen Mesaj</div>
         <div class="stat-value">${stats.messagesBridged}</div>
+      </div>
+    </div>
+
+    <div class="monitors-box">
+      <div class="monitors-title">
+        <span>🌐 İZLENEN SİSTEMLER (1 SAATLİK KONTROL)</span>
+        <span>Kanal: #${STATUS_CHANNEL_ID}</span>
+      </div>
+      <div class="monitor-item">
+        <div>
+          <div class="monitor-name">EkoYıldız DuckDNS</div>
+          <div class="monitor-url">https://ekoyildiz.duckdns.org/</div>
+        </div>
+        <div class="badge-status ${duckdnsStatus ? (duckdnsStatus.ok ? 'badge-ok' : 'badge-err') : 'badge-ok'}">
+          ${duckdnsStatus ? (duckdnsStatus.ok ? `🟢 AKTİF (${duckdnsStatus.duration}ms)` : '🔴 HATA') : '🟢 AKTİF'}
+        </div>
+      </div>
+      <div class="monitor-item">
+        <div>
+          <div class="monitor-name">BEM Render App</div>
+          <div class="monitor-url">https://bem-zze4.onrender.com</div>
+        </div>
+        <div class="badge-status ${renderStatus ? (renderStatus.ok ? 'badge-ok' : 'badge-err') : 'badge-ok'}">
+          ${renderStatus ? (renderStatus.ok ? `🟢 AKTİF (${renderStatus.duration}ms)` : '🔴 HATA') : '🟢 AKTİF'}
+        </div>
       </div>
     </div>
 
@@ -965,7 +1228,8 @@ app.get('/health', cronPingLimiter, (req, res) => {
     activeChat: activeChat ? activeChat.username : null,
     pendingQueueCount: reservationQueue.filter(q => q.status === 'pending').length,
     blacklistCount: blacklist.size,
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    monitoredServices: lastSystemHealthResults
   });
 });
 

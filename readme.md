@@ -1,34 +1,45 @@
-# 🚀 Eko Yıldız - 7/24 Anti-DDoS & Anti-Detection Discord User Token
+# 🚀 Eko Yıldız - 7/24 Discord Bot, AI Rezervasyon & Sistem İzleme (Uptime)
 
-Bu proje, Discord hesabınızı (User Token) **Render.com** üzerinde 7/24 kesintisiz online tutar. Ban ve DDoS saldırı risklerini engellemek için **Anti-Detection** ve **Anti-DDoS Güvenlik Katmanları** ile donatılmıştır.
-
----
-
-## 🛡️ Anti-DDoS & Güvenlik Özellikleri
-
-1. ⚡ **Express Rate Limiting (IP Sınırlaması):**
-   - Her IP için dakikada maksimum 60 istek sınırı konulmuştur. Sunucunuza atılacak bot/DDoS botnet saldırıları anında engelleyip `HTTP 429 Too Many Requests` döndürür.
-
-2. ⛑️ **Helmet HTTP Güvenlik Başlıkları:**
-   - XSS (Cross-Site Scripting), MIME Sniffing, Clickjacking ve Header manipülasyonu açıklarına karşı sunucuyu zırhlar.
-
-3. 📦 **Payload Size Cap (Maksimum 10kb Paket Sınırı):**
-   - Sunucuya büyük veri paketleri yollayarak bellek doldurma (RAM Exhaustion) DDoS saldırılarını engeller.
-
-4. 🔄 **Reverse Proxy IP Trust:**
-   - Render'ın yük dengeleyicisi arkasında gerçek istemci IP'lerini doğru tespit ederek güvenli sınırlama sağlar.
+Bu proje, Discord botu olarak çalışarak kullanıcıları Groq Yapay Zekası ile karşılar, randevu/rezervasyon yönetimi sağlar ve **EkoYıldız sistemlerini (DuckDNS & Render)** 7/24 saatlik periyotlarla izleyip Discord kanalına ve DM ile yöneticiye durum raporu sunar.
 
 ---
 
-## 🔒 Anti-Detection (Ban Engelleme) Özellikleri
-- 🔌 **Sadece WebSocket (Gateway):** 0 REST API isteği.
-- 💻 **Windows 10 Desktop Client Spoofing:** Discord masaüstü istemci taklidi.
-- 🌙 **Gece İnsan Uykusu Taklidi:** Gece 01:00 - 08:00 (TSİ) arası Boşta (Idle) mod.
-- 📺 **Mor Yayın Rozeti:** Profilde **"Eko Yıldız youtube kanalına abone ol!"** yayını.
+## 🌟 Temel Özellikler
+
+1. 🤖 **Resmi Discord Bot Token (discord.js v14):**
+   - Selfbot/User Token kaldırılmıştır. Sadece resmi Bot Token ile güvenli ve yasal bir şekilde çalışır.
+   - `GuildMessages`, `MessageContent`, `DirectMessages` intentleri ile tüm `e!` komutları ve özel mesajlar anında işlenir.
+
+2. 🌐 **Otomatik Sistem & Uptime Monitörü (Her 1 Saatte Bir):**
+   - İzlenen Adresler:
+     - `https://ekoyildiz.duckdns.org/`
+     - `https://bem-zze4.onrender.com`
+   - Bildirim Kanalı: `<#1518692466860101915>`
+   - **Tüm sistemler aktifken:**
+     `:information_source: **EkoYıldız sistemleri aktif.**` mesajı ve bot/sistem uptime süreleri yayınlanır.
+   - **Herhangi bir sistem kapalıyken:**
+     `⚠️ **Birkaç sistemde hata oluştu.. Ekibimize bu durum bildirildi. Düzeltmek için çalışıyoruz.**` mesajı kanala yazılır ve anında **Eko'ya (1031620522406072350)** detaylı arıza DM bildirimi gönderilir.
+
+3. 💬 **Groq AI (Llama 3.3 70B) & Rezervasyon Köprüsü:**
+   - Botun DM'sine yazan kullanıcıları karşılar, görüşme konusunu öğrenir ve Eko'ya butonlu rezervasyon talebi açar.
+   - Eko kabul ettiğinde iki taraf arasında canlı köprü kurulur.
+
+4. 🛡️ **Anti-DDoS Express Dashboard:**
+   - Web arayüzü ve Render self-ping mekanizması ile 7/24 ayakta kalır.
 
 ---
 
-## 🛠️ CronJob Bağlantı Adresleri
-CronJob servisleriniz için 120 req/min esnek limitli adresler:
-- **Ping:** `https://user-token-724.onrender.com/ping`
-- **Health JSON:** `https://user-token-724.onrender.com/health`
+## ⚙️ Ortam Değişkenleri (.env)
+
+```env
+# Discord Bot Token
+BOTTOKEN=OT...
+
+# Groq API Key
+GROQTOKEN=gsk_...
+
+# Yönetici ID & Bildirim Kanalı
+EKO_USER_ID=1031620522406072350
+STATUS_CHANNEL_ID=1518692466860101915
+PORT=3000
+```
