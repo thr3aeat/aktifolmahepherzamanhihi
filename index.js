@@ -47,7 +47,7 @@ botClient.on('ready', () => {
   logger.success('BOT GİRİŞİ', `Discord Bot Aktif: ${botClient.user.tag}`);
   logger.info('MODÜLLER', 'Groq AI, Rezervasyon Sistemi ve Komutlar Hazır.');
 
-  // 1 Saatlik Sistem İzleme Servisini Başlat
+  // 1 Saatlik Tek Durum Mesajı & İzleme Servisini Başlat
   startMonitoring(botClient);
 });
 
@@ -56,12 +56,6 @@ botClient.on('messageCreate', async (message) => {
     if (!message.author || message.author.bot) return;
 
     const content = message.content ? message.content.trim() : '';
-
-    // Hızlı Yol: e! veya E! ile başlayan sunucu komutları
-    if (content.toLowerCase().startsWith('e!')) {
-      await commandHandler.handleGuildMessage(message, botClient);
-      return;
-    }
 
     // Eko Admin Hızlı Durdurma / Başlatma
     if (message.author.id === config.EKO_USER_ID) {
@@ -76,12 +70,19 @@ botClient.on('messageCreate', async (message) => {
       }
     }
 
-    // Sunucu İçi Mesajlar (Seviye / AFK kontrolleri vb.)
+    // Komut Ön Eki Kontrolü ('e!', '!', veya Mention)
+    const isBotMention = botClient.user && (content.startsWith(`<@${botClient.user.id}>`) || content.startsWith(`<@!${botClient.user.id}>`));
+    const isPrefixed = content.toLowerCase().startsWith('e!') || isBotMention;
+
     if (message.guild) {
       await commandHandler.handleGuildMessage(message, botClient);
     } else {
-      // Özel Mesajlar (DM Rezervasyon & Canlı Sohbet Köprüsü)
-      await chatService.handleIncomingDM(botClient, message);
+      if (isPrefixed) {
+        await commandHandler.handleGuildMessage(message, botClient);
+      } else {
+        // DM Rezervasyon & Canlı Sohbet Köprüsü
+        await chatService.handleIncomingDM(botClient, message);
+      }
     }
   } catch (err) {
     logger.error('MESSAGE CREATE HATASI', 'Mesaj işlenirken hata oluştu:', err);

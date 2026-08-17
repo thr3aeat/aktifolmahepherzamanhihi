@@ -247,25 +247,46 @@ module.exports = [
     userPermissions: [],
     botPermissions: [],
     async execute(message, args, context) {
-      const categories = {};
+      const uniqueCommands = new Map();
       for (const [_, cmd] of context.commands) {
-        if (cmd.aliases && cmd.aliases.includes(_)) continue;
+        if (!uniqueCommands.has(cmd.name)) {
+          uniqueCommands.set(cmd.name, cmd);
+        }
+      }
+
+      const categories = {};
+      for (const [_, cmd] of uniqueCommands) {
         const cat = cmd.category || 'Genel';
         if (!categories[cat]) categories[cat] = [];
         categories[cat].push(cmd);
       }
 
       const embed = new EmbedBuilder()
-        .setTitle('📚 EKOYILDIZ BOT KOMUTLARI (Prefix: e!)')
-        .setDescription('Tüm komutlar modüler yapıdadır. Komut kullanımı ve izinler aşağıdadır:')
+        .setTitle('📚 EKOYILDIZ BOT KOMUT MENÜSÜ')
+        .setDescription('Örnek Kullanım: `e!yardım` veya `e!sistemler`\nHer komutun yetkileri kendine özeldir:')
         .setColor(0x8b5cf6);
 
       for (const [catName, cmdList] of Object.entries(categories)) {
-        const formatted = cmdList.map(c => {
-          const reqPerms = c.userPermissions && c.userPermissions.length > 0 ? ` *(Yetki: ${c.userPermissions.join(', ')})*` : '';
-          return `• \`e!${c.name}\`: ${c.description}${reqPerms}`;
-        }).join('\n');
-        embed.addFields({ name: `📌 ${catName} Komutları`, value: formatted });
+        let chunk = '';
+        let part = 1;
+
+        for (const c of cmdList) {
+          const reqPerms = c.userPermissions && c.userPermissions.length > 0 ? ` *(${c.userPermissions.join(', ')})*` : '';
+          const line = `• \`e!${c.name}\`: ${c.description}${reqPerms}\n`;
+
+          if (chunk.length + line.length > 950) {
+            embed.addFields({ name: `📌 ${catName} Komutları (Bölüm ${part})`, value: chunk });
+            chunk = line;
+            part++;
+          } else {
+            chunk += line;
+          }
+        }
+
+        if (chunk.length > 0) {
+          const fieldTitle = part > 1 ? `📌 ${catName} Komutları (Bölüm ${part})` : `📌 ${catName} Komutları`;
+          embed.addFields({ name: fieldTitle, value: chunk });
+        }
       }
 
       return message.reply({ embeds: [embed] });

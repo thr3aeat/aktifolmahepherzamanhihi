@@ -1,12 +1,38 @@
 const axios = require('axios');
 const { EmbedBuilder } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
 const config = require('../config');
 const logger = require('../utils/logger');
+
+const STATE_FILE = path.join(__dirname, '../../status_state.json');
 
 let lastStatusMessageId = null;
 let lastResults = [];
 let monitorTimer = null;
 const startTime = Date.now();
+
+// Kayıtlı mesaj ID'sini yükle
+try {
+  if (fs.existsSync(STATE_FILE)) {
+    const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    if (data && data.messageId) {
+      lastStatusMessageId = data.messageId;
+      logger.info('MONİTOR', `Önceki durum mesaj ID yüklendi: ${lastStatusMessageId}`);
+    }
+  }
+} catch (e) {
+  logger.warn('MONİTOR', 'Durum kayıt dosyası okunamadı:', e.message);
+}
+
+function saveStatusMessageId(id) {
+  lastStatusMessageId = id;
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ messageId: id, updatedAt: Date.now() }, null, 2), 'utf8');
+  } catch (e) {
+    logger.warn('MONİTOR', 'Durum mesaj ID kaydedilemedi:', e.message);
+  }
+}
 
 function formatUptime(ms) {
   const totalSeconds = Math.floor(ms / 1000);
@@ -51,7 +77,7 @@ async function checkServiceHealth(service) {
       ok: false,
       status: null,
       duration,
-      error: err.code === 'ECONNABORTED' ? 'Zaman aşımı (Timeout > 15s)' : (err.message || 'Bağlantı hatası')
+      error: err.code === 'ECONNABORTED' ? 'Zaman aşımı (> 15s)' : (err.message || 'Bağlantı hatası')
     };
   }
 }
@@ -70,22 +96,22 @@ async function performSystemCheck(client) {
   const uptimeStr = formatUptime(Date.now() - startTime);
   const nowUnix = Math.floor(Date.now() / 1000);
 
-  let descriptionText = '';
-  let embedColor = 0x10b981; // Yeşil
+  let statusContent = '';
+  let embedColor = 0x10b981;
 
   if (allActive) {
-    descriptionText = `:information_source: **EkoYıldız sistemleri aktif.**\n\n` +
-      `⏱ **Uptime (Çalışma Süresi):** ${uptimeStr}\n\n` +
+    statusContent = `:information_source: **EkoYıldız sistemleri aktif.**\n` +
+      `Kaç saattir ve gündür? **${uptimeStr}**\n\n` +
       `🌐 **Sistem Durumları:**\n` +
       results.map(r => `• ${r.url} ➔ 🟢 **Aktif** (\`${r.duration}ms\`)`).join('\n') +
-      `\n\n🕒 *Son Güncelleme:* <t:${nowUnix}:F> (<t:${nowUnix}:R>)\n*(Bu rapor her 1 saatte bir otomatik yenilenir)*`;
+      `\n\n🕒 *Son Güncelleme:* <t:${nowUnix}:F> (<t:${nowUnix}:R>)\n*(Bu mesaj her 1 saatte bir otomatik düzenlenir)*`;
     embedColor = 0x10b981;
   } else {
-    descriptionText = `⚠️ **Birkaç sistemde hata oluştu.. Ekibimize bu durum bildirildi. Düzeltmek için çalışıyoruz.**\n\n` +
-      `⏱ **Uptime (Çalışma Süresi):** ${uptimeStr}\n\n` +
+    statusContent = `⚠️ **Birkaç sistemde hata oluştu.. Ekibimize bu durum bildirildi. Düzeltmek için çalışıyoruz.**\n\n` +
+      `⏱ **Uptime:** **${uptimeStr}**\n\n` +
       `🌐 **Sistem Durumları:**\n` +
-      results.map(r => `• ${r.url} ➔ ${r.ok ? `🟢 **Aktif** (\`${r.duration}ms\`)` : `🔴 **Hata:** ${r.error}`}`).join('\n') +
-      `\n\n🕒 *Son Kontrol:* <t:${nowUnix}:F> (<t:${nowUnix}:R>)\n*(Bu rapor her 1 saatte bir otomatik yenilenir)*`;
+      results.map(r => `• ${r.url} ➔ ${r.ok ? `🟢 **Aktif** (\`${r.duration}ms\`)` : `🔴 **Hata:** \`${r.error}\``}`).join('\n') +
+      `\n\n🕒 *Son Kontrol:* <t:${nowUnix}:F> (<t:${nowUnix}:R>)\n*(Bu mesaj her 1 saatte bir otomatik düzenlenir)*`;
     embedColor = 0xef4444;
 
     // Hata durumunda Eko'ya (1031620522406072350) DM gönder
@@ -111,56 +137,58 @@ async function performSystemCheck(client) {
     }
   }
 
-  // Bildirim Kanalına (1518692466860101915) Gönder / Güncelle
+  // Bildirim Kanalında TEK MESAJ YÖNETİMİ (1518692466860101915)
   try {
     const channel = await client.channels.fetch(config.STATUS_CHANNEL_ID).catch(() => null);
     if (channel && channel.isTextBased()) {
       const embed = new EmbedBuilder()
         .setTitle(allActive ? 'ℹ️ EkoYıldız Sistem Durum Raporu' : '⚠️ EkoYıldız Sistem Arıza Uyarısı')
-        .setDescription(descriptionText)
+        .setDescription(statusContent)
         .setColor(embedColor)
-        .setFooter({ text: 'EkoYıldız Otomatik İzleme Sistemi • 1 Saatte Bir Güncellenir' })
+        .setFooter({ text: 'EkoYıldız Otomatik İzleme Sistemi • Her Saat Düzenlenir' })
         .setTimestamp();
 
-      let updated = false;
+      let targetMessage = null;
 
-      // 1. Önceki kaydedilmiş mesajı güncelle
+      // 1. Kaydedilmiş mesaj ID'si ile fetch etmeyi dene
       if (lastStatusMessageId) {
         try {
-          const prevMsg = await channel.messages.fetch(lastStatusMessageId);
-          if (prevMsg) {
-            await prevMsg.edit({ embeds: [embed] });
-            updated = true;
-          }
+          targetMessage = await channel.messages.fetch(lastStatusMessageId);
         } catch (e) {
-          updated = false;
+          targetMessage = null;
         }
       }
 
-      // 2. Kanaldaki botun son mesajını bulup güncelle
-      if (!updated) {
+      // 2. Bulunamadıysa kanaldaki son 50 mesajı tara ve botun son mesajını yakala
+      if (!targetMessage) {
         try {
-          const recentMessages = await channel.messages.fetch({ limit: 10 });
-          const myMsg = recentMessages.find(m => m.author.id === client.user.id);
-          if (myMsg) {
-            await myMsg.edit({ embeds: [embed] });
-            lastStatusMessageId = myMsg.id;
-            updated = true;
+          const recent = await channel.messages.fetch({ limit: 50 });
+          const botMessages = recent.filter(m => m.author.id === client.user.id);
+          if (botMessages.size > 0) {
+            targetMessage = botMessages.first();
+            // Kanaldaki botun eski mükerrer mesajlarını temizle (Kanalı temiz ve tek mesajlı tutmak için)
+            const oldDuplicates = botMessages.filter(m => m.id !== targetMessage.id);
+            for (const [_, dup] of oldDuplicates) {
+              await dup.delete().catch(() => {});
+            }
           }
         } catch (e) {
-          updated = false;
+          targetMessage = null;
         }
       }
 
-      // 3. Bulunamazsa yeni mesaj yolla
-      if (!updated) {
+      // 3. Mesaj varsa DÜZENLE, yoksa YENİ AT ve ID'yi kaydet
+      if (targetMessage) {
+        await targetMessage.edit({ content: '', embeds: [embed] });
+        saveStatusMessageId(targetMessage.id);
+        logger.success('MONİTOR', `Kanal (#${config.STATUS_CHANNEL_ID}) durum mesajı (${targetMessage.id}) başarıyla DÜZENLENDİ.`);
+      } else {
         const sent = await channel.send({ embeds: [embed] });
-        lastStatusMessageId = sent.id;
+        saveStatusMessageId(sent.id);
+        logger.success('MONİTOR', `Kanal (#${config.STATUS_CHANNEL_ID}) için TEK durum mesajı (${sent.id}) OLUŞTURULDU.`);
       }
-
-      logger.success('MONİTOR', `Durum kanalı (#${config.STATUS_CHANNEL_ID}) başarıyla güncellendi.`);
     } else {
-      logger.warn('MONİTOR', `Hedef durum kanalı (${config.STATUS_CHANNEL_ID}) bulunamadı.`);
+      logger.warn('MONİTOR', `Hedef durum kanalı (${config.STATUS_CHANNEL_ID}) bulunamadı veya bota yazma yetkisi yok.`);
     }
   } catch (chanErr) {
     logger.error('MONİTOR KANAL', 'Kanal mesajı güncellenirken hata:', chanErr);
@@ -172,17 +200,17 @@ async function performSystemCheck(client) {
 function startMonitoring(client) {
   if (monitorTimer) clearInterval(monitorTimer);
 
-  // Bot açıldıktan 5 saniye sonra ilk kontrolü yap
+  // Bot açıldıktan 4 saniye sonra tek durum mesajını oluştur veya güncelle
   setTimeout(() => {
     performSystemCheck(client).catch(err => logger.error('MONİTOR İLK', 'İlk kontrolde hata:', err));
-  }, 5000);
+  }, 4000);
 
-  // Her 1 saatte bir periyodik kontrol
+  // Her 1 saatte bir (3600000 ms) AYNI MESAJI DÜZENLE
   monitorTimer = setInterval(() => {
     performSystemCheck(client).catch(err => logger.error('MONİTOR PERİYODİK', 'Periyodik kontrolde hata:', err));
   }, config.MONITOR_INTERVAL_MS);
 
-  logger.success('MONİTOR', `1 saatlik otomatik sistem izleme servisi aktif edildi.`);
+  logger.success('MONİTOR', `1 saatlik otomatik durum mesajı düzenleme servisi aktif.`);
 }
 
 module.exports = {

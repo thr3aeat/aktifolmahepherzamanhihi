@@ -73,30 +73,40 @@ function loadAllCommands() {
     registerCommand(cmd);
   }
 
-  logger.success('KOMUTLAR', `Toplam ${commands.size} komut kaydı (takma adlar dahil) başarıyla yüklendi.`);
+  logger.success('KOMUTLAR', `Toplam ${commands.size} komut eşleşmesi başarıyla yüklendi.`);
 }
 
 loadAllCommands();
 
-function checkPermissions(message, userPerms = [], botPerms = []) {
+async function checkPermissions(message, userPerms = [], botPerms = []) {
   if (!message.guild) return { pass: true };
 
-  // Kullanıcı Yetki Kontrolü
-  for (const perm of userPerms) {
-    if (!message.member.permissions.has(PermissionsBitField.Flags[perm])) {
-      const trName = PERM_NAMES_TR[perm] || perm;
-      return {
-        pass: false,
-        error: `❌ Bu komutu kullanmak için **${trName}** yetkisine sahip olmalısınız.`
-      };
+  // Kullanıcı Member Nesnesini Doğrula
+  if (!message.member) {
+    try {
+      message.member = await message.guild.members.fetch(message.author.id);
+    } catch (e) {}
+  }
+
+  if (message.member && userPerms.length > 0) {
+    for (const perm of userPerms) {
+      const flag = PermissionsBitField.Flags[perm];
+      if (flag && !message.member.permissions.has(flag)) {
+        const trName = PERM_NAMES_TR[perm] || perm;
+        return {
+          pass: false,
+          error: `❌ Bu komutu kullanmak için **${trName}** yetkisine sahip olmalısınız.`
+        };
+      }
     }
   }
 
-  // Bot Yetki Kontrolü
-  const botMember = message.guild.members.me;
-  if (botMember) {
+  // Bot Member Yetki Kontrolü
+  const botMember = message.guild.members.me || (message.client.user ? await message.guild.members.fetch(message.client.user.id).catch(() => null) : null);
+  if (botMember && botPerms.length > 0) {
     for (const perm of botPerms) {
-      if (!botMember.permissions.has(PermissionsBitField.Flags[perm])) {
+      const flag = PermissionsBitField.Flags[perm];
+      if (flag && !botMember.permissions.has(flag)) {
         const trName = PERM_NAMES_TR[perm] || perm;
         return {
           pass: false,
@@ -111,6 +121,14 @@ function checkPermissions(message, userPerms = [], botPerms = []) {
 
 async function handleGuildMessage(message, client) {
   if (!message.author || message.author.bot) return;
+
+  const content = (message.content || '').trim();
+
+  // Message Content Boş Uyarısı (Developer Portal Intent Kapalı Olabilir)
+  if (!content && message.guild && (!message.attachments || message.attachments.size === 0)) {
+    logger.warn('INTENT UYARISI', 'Discord Developer Portal üzerinde "MESSAGE CONTENT INTENT" kapalı olabilir.');
+    return;
+  }
 
   // 1. AFK Kontrolü (Mesaj Yazan Kişi AFK ise kaldır)
   if (afkData.has(message.author.id)) {
@@ -142,14 +160,25 @@ async function handleGuildMessage(message, client) {
     levelData.set(levelKey, userLevel);
   }
 
-  // 4. Komut Ön Eki Kontrolü (`e!` veya `E!`)
-  const content = message.content.trim();
-  if (!content.toLowerCase().startsWith('e!')) return;
+  // 4. Komut Ön Eki (Prefix) Ayrıştırma: 'e!', '!', veya Bot Mention
+  const botMention1 = client?.user ? `<@${client.user.id}>` : null;
+  const botMention2 = client?.user ? `<@!${client.user.id}>` : null;
 
-  const afterPrefix = content.slice(2).trim();
-  if (!afterPrefix) return;
+  let commandBody = null;
 
-  const args = afterPrefix.split(/ +/);
+  if (content.toLowerCase().startsWith('e!')) {
+    commandBody = content.slice(2).trim();
+  } else if (botMention1 && content.startsWith(botMention1)) {
+    commandBody = content.slice(botMention1.length).trim();
+  } else if (botMention2 && content.startsWith(botMention2)) {
+    commandBody = content.slice(botMention2.length).trim();
+  } else if (content.startsWith('!')) {
+    commandBody = content.slice(1).trim();
+  }
+
+  if (!commandBody) return;
+
+  const args = commandBody.split(/ +/);
   const rawCmd = args.shift();
   if (!rawCmd) return;
 
@@ -158,6 +187,8 @@ async function handleGuildMessage(message, client) {
 
   const command = commands.get(commandName) || commands.get(normCmdName);
   if (!command) return;
+
+  logger.info('KOMUT ÇALIŞTIRILIYOR', `Kullanıcı: ${message.author.tag} | Komut: ${command.name} | Sunucu: ${message.guild ? message.guild.name : 'DM'}`);
 
   // 5. Engellenmiş Komut Kontrolü (Sadece Sunucu İçi)
   if (message.guild) {
@@ -168,7 +199,7 @@ async function handleGuildMessage(message, client) {
   }
 
   // 6. Özel Yetki Kontrolü
-  const permCheck = checkPermissions(message, command.userPermissions, command.botPermissions);
+  const permCheck = await checkPermissions(message, command.userPermissions, command.botPermissions);
   if (!permCheck.pass) {
     return message.reply(permCheck.error);
   }
@@ -188,7 +219,7 @@ async function handleGuildMessage(message, client) {
     await command.execute(message, args, context);
   } catch (err) {
     logger.error('KOMUT HATASI', `e!${commandName} komutunda hata:`, err);
-    message.reply('❌ Komut çalıştırılırken bir hata oluştu. Hata otomatik kaydedildi.');
+    message.reply('❌ Komut çalıştırılırken bir hata oluştu. Hata kaydedildi.');
   }
 }
 
