@@ -2,6 +2,7 @@ const logger = require('./logger');
 
 let reconnectAttempts = 0;
 let isReconnecting = false;
+let isTokenFatalError = false;
 
 function setupAutoRecovery(client, token) {
   // 1. Process Düzeyinde Hata Yakalama (Çökme Koruması)
@@ -21,12 +22,12 @@ function setupAutoRecovery(client, token) {
   if (client) {
     client.on('error', (err) => {
       logger.error('DISCORD CLIENT HATASI', 'Gateway/API hatası oluştu:', err);
-      checkAndRecoverConnection(client, token);
+      if (!isTokenFatalError) checkAndRecoverConnection(client, token);
     });
 
     client.on('disconnect', () => {
       logger.warn('DISCORD BAĞLANTI', 'Bot bağlantısı koptu! Otomatik yeniden bağlanma tetikleniyor...');
-      checkAndRecoverConnection(client, token);
+      if (!isTokenFatalError) checkAndRecoverConnection(client, token);
     });
 
     client.on('shardError', (error, shardId) => {
@@ -35,7 +36,7 @@ function setupAutoRecovery(client, token) {
 
     client.on('shardDisconnect', (event, shardId) => {
       logger.warn(`SHARD KOPTU [${shardId}]`, 'Shard bağlantısı kesildi, yeniden bağlanılıyor...');
-      checkAndRecoverConnection(client, token);
+      if (!isTokenFatalError) checkAndRecoverConnection(client, token);
     });
 
     client.on('shardReconnecting', (shardId) => {
@@ -46,28 +47,28 @@ function setupAutoRecovery(client, token) {
   // 3. 7/24 Sağlık ve Bağlantı Nöbetçisi (Watchdog Timer)
   setInterval(() => {
     try {
-      if (!client || !token) return;
+      if (!client || !token || isTokenFatalError) return;
 
       const wsStatus = client.ws?.status;
       // 0 = READY, 1 = CONNECTING, 2 = RECONNECTING, 3 = IDLE, 4 = NEARLY, 5 = DISCONNECTED, 6 = WAITING_FOR_GUILDS, 7 = IDENTIFYING, 8 = RESUMING
       if (wsStatus === 5 || (!client.isReady() && wsStatus !== 1 && wsStatus !== 2 && wsStatus !== 8)) {
-        logger.warn('NÖBETÇİ (WATCHDOG)', `Bot bağlantısı pasif görünüyor (WS Durum: ${wsStatus}). Otomatik düzeltme devrede...`);
+        logger.warn('NÖBETÇİ (WATCHDOG)', `Bot bağlantısı pasif (WS Durum: ${wsStatus}). Otomatik bağlanma kontrol ediliyor...`);
         checkAndRecoverConnection(client, token);
       }
     } catch (e) {
       logger.error('NÖBETÇİ HATASI', 'Watchdog döngüsünde hata:', e);
     }
-  }, 30 * 1000);
+  }, 45 * 1000);
 
   logger.success('OTO-KURTARMA', '7/24 Otomatik Hata Kurtarma ve Bağlantı Nöbetçisi Devreye Alındı.');
 }
 
 async function checkAndRecoverConnection(client, token) {
-  if (isReconnecting || !token) return;
+  if (isReconnecting || !token || isTokenFatalError) return;
   isReconnecting = true;
   reconnectAttempts++;
 
-  const delayMs = Math.min(reconnectAttempts * 3000, 30000);
+  const delayMs = Math.min(reconnectAttempts * 4000, 30000);
   logger.info('OTO-DÜZELTME', `${delayMs / 1000} saniye içinde yeniden giriş denemesi (#${reconnectAttempts}) yapılacak...`);
 
   setTimeout(async () => {
@@ -82,8 +83,14 @@ async function checkAndRecoverConnection(client, token) {
       await client.login(token);
       logger.success('OTO-DÜZELTME', 'Bot başarıyla yeniden bağlandı ve oturum açıldı!');
       reconnectAttempts = 0;
+      isTokenFatalError = false;
     } catch (err) {
-      logger.error('YENİDEN BAĞLANTI HATASI', 'Bot giriş denemesi başarısız oldu, bir sonraki döngüde tekrar denenecek:', err);
+      if (err?.code === 'TokenInvalid' || String(err?.message).includes('An invalid token was provided')) {
+        isTokenFatalError = true;
+        logger.error('GEÇERSİZ TOKEN UYARISI', 'Discord Bot Token geçersiz! Lütfen Render.com Environment sekmesinde BOTTOKEN değerinin doğruluğunu kontrol edin.');
+      } else {
+        logger.error('YENİDEN BAĞLANTI HATASI', 'Giriş denemesi başarısız oldu, bir sonraki döngüde tekrar denenecek:', err.message);
+      }
     } finally {
       isReconnecting = false;
     }
