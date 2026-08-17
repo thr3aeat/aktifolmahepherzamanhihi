@@ -106,11 +106,13 @@ startServer(botClient);
 // 5. BOT TOKEN GİRİŞİ
 // -------------------------------------------------------------
 if (config.BOT_TOKEN) {
+  const masked = config.BOT_TOKEN.substring(0, 5) + '...' + config.BOT_TOKEN.substring(config.BOT_TOKEN.length - 4);
+  logger.info('YAPILANDIRMA', `Bot Token algılandı (Uzunluk: ${config.BOT_TOKEN.length}, Önizleme: ${masked}). Giriş yapılıyor...`);
   botClient.login(config.BOT_TOKEN).catch(err => {
-    logger.error('LOGIN HATASI', 'Bot giriş yapamadı (Token hatalı veya internet yok):', err);
+    logger.error('LOGIN HATASI', 'Bot giriş yapamadı (Discord tokeni reddetti):', err);
   });
 } else {
-  logger.warn('YAPILANDIRMA', '.env dosyasında BOTTOKEN bulunamadı!');
+  logger.warn('YAPILANDIRMA', 'Render.com Environment Variables içinde geçerli bir BOTTOKEN veya TOKEN bulunamadı!');
 }
 
 module.exports = {

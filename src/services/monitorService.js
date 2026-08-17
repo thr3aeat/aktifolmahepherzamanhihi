@@ -54,7 +54,7 @@ async function checkServiceHealth(service) {
   try {
     const response = await axios.get(service.url, {
       timeout: 15000,
-      validateStatus: () => true, // 4xx ve 5xx durumlarında exception fırlatmaz
+      validateStatus: () => true,
       headers: {
         'User-Agent': 'EkoYildiz-Monitor/2.0'
       }
@@ -96,25 +96,14 @@ async function performSystemCheck(client) {
   const uptimeStr = formatUptime(Date.now() - startTime);
   const nowUnix = Math.floor(Date.now() / 1000);
 
-  let statusContent = '';
-  let embedColor = 0x10b981;
-
+  // Embedsiz, link ve isim içermeyen kısa ve net düz metin (Plain Text)
+  let statusText = '';
   if (allActive) {
-    statusContent = `:information_source: **EkoYıldız sistemleri aktif.**\n` +
-      `Kaç saattir ve gündür? **${uptimeStr}**\n\n` +
-      `🌐 **Sistem Durumları:**\n` +
-      results.map(r => `• ${r.url} ➔ 🟢 **Aktif** (\`${r.duration}ms\`)`).join('\n') +
-      `\n\n🕒 *Son Güncelleme:* <t:${nowUnix}:F> (<t:${nowUnix}:R>)\n*(Bu mesaj her 1 saatte bir otomatik düzenlenir)*`;
-    embedColor = 0x10b981;
+    statusText = `:information_source: **EkoYıldız sistemleri aktif. Kaç saatir ve gündür? ${uptimeStr}**`;
   } else {
-    statusContent = `⚠️ **Birkaç sistemde hata oluştu.. Ekibimize bu durum bildirildi. Düzeltmek için çalışıyoruz.**\n\n` +
-      `⏱ **Uptime:** **${uptimeStr}**\n\n` +
-      `🌐 **Sistem Durumları:**\n` +
-      results.map(r => `• ${r.url} ➔ ${r.ok ? `🟢 **Aktif** (\`${r.duration}ms\`)` : `🔴 **Hata:** \`${r.error}\``}`).join('\n') +
-      `\n\n🕒 *Son Kontrol:* <t:${nowUnix}:F> (<t:${nowUnix}:R>)\n*(Bu mesaj her 1 saatte bir otomatik düzenlenir)*`;
-    embedColor = 0xef4444;
+    statusText = `⚠️ **Birkaç sistemde hata oluştu.. Ekibimize bu durum bildirildi. Düzeltmek için çalışıyoruz.**`;
 
-    // Hata durumunda Eko'ya (1031620522406072350) DM gönder
+    // Hata durumunda Eko'ya (1031620522406072350) detaylı DM gönder
     try {
       const ekoUser = await client.users.fetch(config.EKO_USER_ID).catch(() => null);
       if (ekoUser) {
@@ -137,17 +126,10 @@ async function performSystemCheck(client) {
     }
   }
 
-  // Bildirim Kanalında TEK MESAJ YÖNETİMİ (1518692466860101915)
+  // Bildirim Kanalında TEK DÜZ METİN MESAJI YÖNETİMİ (1518692466860101915)
   try {
     const channel = await client.channels.fetch(config.STATUS_CHANNEL_ID).catch(() => null);
     if (channel && channel.isTextBased()) {
-      const embed = new EmbedBuilder()
-        .setTitle(allActive ? 'ℹ️ EkoYıldız Sistem Durum Raporu' : '⚠️ EkoYıldız Sistem Arıza Uyarısı')
-        .setDescription(statusContent)
-        .setColor(embedColor)
-        .setFooter({ text: 'EkoYıldız Otomatik İzleme Sistemi • Her Saat Düzenlenir' })
-        .setTimestamp();
-
       let targetMessage = null;
 
       // 1. Kaydedilmiş mesaj ID'si ile fetch etmeyi dene
@@ -166,7 +148,7 @@ async function performSystemCheck(client) {
           const botMessages = recent.filter(m => m.author.id === client.user.id);
           if (botMessages.size > 0) {
             targetMessage = botMessages.first();
-            // Kanaldaki botun eski mükerrer mesajlarını temizle (Kanalı temiz ve tek mesajlı tutmak için)
+            // Kanaldaki botun eski mükerrer mesajlarını temizle
             const oldDuplicates = botMessages.filter(m => m.id !== targetMessage.id);
             for (const [_, dup] of oldDuplicates) {
               await dup.delete().catch(() => {});
@@ -177,13 +159,13 @@ async function performSystemCheck(client) {
         }
       }
 
-      // 3. Mesaj varsa DÜZENLE, yoksa YENİ AT ve ID'yi kaydet
+      // 3. Mesaj varsa DÜZENLE (Embedsiz Düz Metin), yoksa YENİ AT ve ID'yi kaydet
       if (targetMessage) {
-        await targetMessage.edit({ content: '', embeds: [embed] });
+        await targetMessage.edit({ content: statusText, embeds: [] });
         saveStatusMessageId(targetMessage.id);
-        logger.success('MONİTOR', `Kanal (#${config.STATUS_CHANNEL_ID}) durum mesajı (${targetMessage.id}) başarıyla DÜZENLENDİ.`);
+        logger.success('MONİTOR', `Kanal (#${config.STATUS_CHANNEL_ID}) durum mesajı (${targetMessage.id}) DÜZENLENDİ: "${statusText}"`);
       } else {
-        const sent = await channel.send({ embeds: [embed] });
+        const sent = await channel.send({ content: statusText, embeds: [] });
         saveStatusMessageId(sent.id);
         logger.success('MONİTOR', `Kanal (#${config.STATUS_CHANNEL_ID}) için TEK durum mesajı (${sent.id}) OLUŞTURULDU.`);
       }
@@ -194,7 +176,7 @@ async function performSystemCheck(client) {
     logger.error('MONİTOR KANAL', 'Kanal mesajı güncellenirken hata:', chanErr);
   }
 
-  return { allActive, results, uptimeStr };
+  return { allActive, results, uptimeStr, statusText };
 }
 
 function startMonitoring(client) {
