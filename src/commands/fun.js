@@ -333,51 +333,138 @@ module.exports = [
       const target = message.mentions.users.first() || message.author;
 
       if (target.bot) {
-        return message.reply('🤖 **Ben bir robotum ama siber antenim tam 100 cm!** 📡⚡');
+        return message.reply('🤖 **Ben bir robotum ama siber antenim tam 100 cm!** 📡⚡\n*Pil seviyesi %100, aşırı ısınma koruması devrede!* 🔞');
       }
 
       const calculateCm = () => Math.floor(Math.random() * 38) + 1;
+      const calculateHardness = () => Math.floor(Math.random() * 50) + 51; // %51 - %100
+
+      const getStamina = (cm) => {
+        if (cm <= 7) return '⚡ 3 Saniye (Erken Final!)';
+        if (cm <= 14) return '⏱️ 15 Dakika (Standart Performans)';
+        if (cm <= 22) return '🔥 45 Dakika + Uzatmalar!';
+        if (cm <= 30) return '🚀 3 Gün 3 Gece (Efsane Maraton)';
+        return '🐉 Şampiyonlar Ligi (Yatak Kırıcı!)';
+      };
 
       const getTitleAndColor = (cm) => {
-        if (cm <= 5) return { title: 'Mikroskopik 🔬', comment: 'Arama kurtarma ekibi mercekle arıyor...', color: 0xef4444 };
-        if (cm <= 12) return { title: 'Mütevazı 🐣', comment: 'Şirin ve kullanışlı, şükretmek lazım.', color: 0xf59e0b };
-        if (cm <= 18) return { title: 'İdeal Boyut 📏', comment: 'Türkiye standartlarının gurur kaynağı!', color: 0x10b981 };
-        if (cm <= 25) return { title: 'Devasa 🦍', comment: 'Dikkat et, ruhsatlı silah sayılabilir!', color: 0x3b82f6 };
-        if (cm <= 32) return { title: 'Anakonda 🐍', comment: 'Çevredeki yapılar tahliye ediliyor!', color: 0x8b5cf6 };
-        return { title: 'Kozmik Gökdelen 🚀', comment: 'NASA uzay mekiği yerine yörüngeye fırlatmayı planlıyor!', color: 0xec4899 };
+        if (cm <= 5) return {
+          title: '🔬 Mikroskopik & Fındık Kadar',
+          comment: 'Cımbız desteği şart! Rüzgarda uçmasın dikkat et, fenerle aranıyor... 🤏',
+          alert: '⚠️ AFAD arama kurtarma ekibi mercekle bölgede!',
+          color: 0xef4444
+        };
+        if (cm <= 11) return {
+          title: '🐣 Mütevazı Anadolu Kaplanı',
+          comment: 'Niyet iyi ama ekipman biraz fındık kadar. Kalbin temiz, özgüvenin yeter! 😌',
+          alert: '✅ İdare eder, üzmez ama çok da heyecanlandırmaz.',
+          color: 0xf59e0b
+        };
+        if (cm <= 17) return {
+          title: '📏 Altın Milli Ortalama',
+          comment: 'Tam bir fiyat/performans ürünü! İş görür, utandırmaz, çarşafı hafiften sallar. 🔥',
+          alert: '👍 Türkiye standartlarının gurur tablosu.',
+          color: 0x10b981
+        };
+        if (cm <= 24) return {
+          title: '🦍 Devasa Yatak Kırıcı',
+          comment: 'Ateşli ve tehlikeli! Karşı taraf hafiften endişeli ve tırsmış durumda... 💥',
+          alert: '🚨 DİKKAT: Çevredeki mobilyalara zarar verebilir!',
+          color: 0x3b82f6
+        };
+        if (cm <= 31) return {
+          title: '🐍 Çılgın Anakonda',
+          comment: 'Doğal afet bölgesi ilan edildi! Komşular polise haber verdi, deprem alarmı çalıyor! 🔞',
+          alert: '🔞 18+ Çevredekiler sığınaklara kaçsın!',
+          color: 0x8b5cf6
+        };
+        return {
+          title: '🚀 Gökdelen Canavarı / Mitolojik Efsane',
+          comment: 'Polis çevirmede durdurdu, jandarma ruhsat istedi! Yörüngeye fırlatılacak boyutta! 🌌⚡',
+          alert: '⚡ EFSANEVİ BOYUT: Ruhsatlı kitle imha silahı!',
+          color: 0xec4899
+        };
       };
 
       const makeBar = (cm) => {
         const total = 10;
         const filled = Math.min(total, Math.max(1, Math.round((cm / 40) * total)));
-        return '8' + '='.repeat(filled * 2) + 'D';
+        return '8' + '='.repeat(filled * 2) + 'D 💦';
       };
 
-      const createEmbed = (user, cm) => {
+      const getCondomSize = (cm) => {
+        if (cm <= 5) return 'XXS (Parmak Kılıfı Tipi 🤏)';
+        if (cm <= 12) return 'S / M (Şirin Standart 📦)';
+        if (cm <= 20) return 'L / XL (Mega Beden 🔥)';
+        if (cm <= 30) return 'XXXL (Çöp Poşeti / Çuval Tipi 🗑️)';
+        return 'Çadır Brandası & Battaniye 🏕️';
+      };
+
+      const getSprayDistance = (cm) => {
+        if (cm <= 5) return '💧 10 cm (Hafif Sızıntı)';
+        if (cm <= 12) return '🎯 1.5 Metre (Hedef Vuran)';
+        if (cm <= 20) return '🧯 10 Metre (Tazyikli İtfaiye Hortumu)';
+        if (cm <= 30) return '🌊 50 Metre (Baraj Kapağı Açıldı!)';
+        return '🚀 Yörüngeye Kadar (Ay\'ı Vurdu! 🌕)';
+      };
+
+      const fantasyPositions = [
+        '🚁 Helikopter Vuruşu (%98 Uyum)',
+        '🧗‍♂️ Tavandan Sallanmalı Kamikaze (%85 Uyum)',
+        '🛌 Klasik Anadolu Misyoneri (%100 Uyum)',
+        '🐉 Alevli Ejderha Vuruşu (%90 Uyum)',
+        '🏎️ Turbo Geri Vites (%92 Uyum)',
+        '🤼 Wrestling Tipi Kilitlenme (%88 Uyum)'
+      ];
+
+      const getRandomPosition = () => fantasyPositions[Math.floor(Math.random() * fantasyPositions.length)];
+
+      const createEmbed = (user, cm, bonus = 0) => {
         const info = getTitleAndColor(cm);
         const bar = makeBar(cm);
+        const hardness = calculateHardness();
+        const stamina = getStamina(cm);
+        const condom = getCondomSize(cm);
+        const spray = getSprayDistance(cm);
+        const position = getRandomPosition();
+
         return new EmbedBuilder()
-          .setTitle(`📏 KAÇ CM ÖLÇER - ${user.username}`)
+          .setTitle(`🍆 KAÇ CM & ULTIMATE PERFORMANS TESTİ - ${user.username}`)
           .setThumbnail(user.displayAvatarURL({ dynamic: true }))
           .setColor(info.color)
           .addFields(
-            { name: '📐 Ölçüm Sonucu', value: `**${cm} cm**`, inline: true },
-            { name: '🏆 Unvan', value: `**${info.title}**`, inline: true },
-            { name: '💬 Yorum', value: info.comment },
+            { name: '📐 Malafat Boyu', value: `**${cm} cm** ${bonus > 0 ? `*(+${bonus} cm Mavi Hap Effect! 💊)*` : ''}`, inline: true },
+            { name: '💎 Sertlik Seviyesi', value: `**%${hardness}** (Çelik Gibi)`, inline: true },
+            { name: '⏱️ Dayanıklılık', value: `**${stamina}**`, inline: true },
+            { name: '🛡️ Uyumlu Beden', value: `**${condom}**`, inline: true },
+            { name: '💦 Tazyik & Menzil', value: `**${spray}**`, inline: true },
+            { name: '🍑 Önerilen Fantezi', value: `**${position}**`, inline: true },
+            { name: '🏆 Ünvan', value: `**${info.title}**` },
+            { name: '💬 Detaylı Yorum', value: info.comment },
+            { name: '📢 Durum Raporu', value: info.alert },
             { name: '📊 Görsel Ölçüm', value: `\`${bar}\`` }
           )
-          .setFooter({ text: 'EkoYıldız Eğlence Sistemi', iconURL: message.client.user.displayAvatarURL() })
+          .setFooter({ text: 'EkoYıldız 🔥 18+ Performans & Fantezi Analiz Sistemi', iconURL: message.client.user.displayAvatarURL() })
           .setTimestamp();
       };
 
       let currentCm = calculateCm();
+      let hasUsedViagra = false;
       const embed = createEmbed(target, currentCm);
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`reroll_cm_${message.author.id}`)
-          .setLabel('🎲 Yeniden Ölç (Zar At)')
-          .setStyle(ButtonStyle.Primary)
+          .setLabel('🎲 Yeniden Ölç')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`viagra_cm_${message.author.id}`)
+          .setLabel('💊 Mavi Hap (+cm)')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId(`fantasy_cm_${message.author.id}`)
+          .setLabel('🍑 Fantezi Çarkı')
+          .setStyle(ButtonStyle.Secondary)
       );
 
       if (message.mentions.users.first() && message.mentions.users.first().id !== message.author.id) {
@@ -399,8 +486,26 @@ module.exports = [
 
         if (interaction.customId.startsWith('reroll_cm_')) {
           currentCm = calculateCm();
+          hasUsedViagra = false;
           const newEmbed = createEmbed(target, currentCm);
           await interaction.update({ embeds: [newEmbed], components: [row] });
+        } else if (interaction.customId.startsWith('viagra_cm_')) {
+          if (hasUsedViagra) {
+            return interaction.reply({ content: '⚠️ **Zaten takviye aldın! Aşırı doz kalp krizine yol açabilir! 💊💀**', ephemeral: true });
+          }
+          hasUsedViagra = true;
+          const bonus = Math.floor(Math.random() * 5) + 3;
+          currentCm += bonus;
+          const boostedEmbed = createEmbed(target, currentCm, bonus);
+          await interaction.update({ embeds: [boostedEmbed], components: [row] });
+          await interaction.followUp({ content: `💊 **Mavi Hap Etkisini Gösterdi!** Malafat **+${bonus} cm** daha uzadı! 🚀🔥`, ephemeral: true });
+        } else if (interaction.customId.startsWith('fantasy_cm_')) {
+          const newPos = fantasyPositions[Math.floor(Math.random() * fantasyPositions.length)];
+          const fantasyEmbed = new EmbedBuilder()
+            .setTitle(`🍑 FANTEZİ ÇARKI - ${target.username}`)
+            .setColor(0xec4899)
+            .setDescription(`🔥 **Rastgele Fantezi Kartı Çekildi!**\n\n👉 **Bugünün Önerilen Pozisyonu:**\n**${newPos}**\n\n*Partneriniz hazırsa hemen deneyebilirsiniz!* 😉🔞`);
+          await interaction.reply({ embeds: [fantasyEmbed], ephemeral: true });
         } else if (interaction.customId.startsWith('compare_cm_')) {
           const user1Cm = currentCm;
           const user2Cm = calculateCm();
@@ -408,13 +513,13 @@ module.exports = [
           const p2 = message.author;
 
           const compEmbed = new EmbedBuilder()
-            .setTitle('⚔️ KAÇ CM DÜELLOSU & KARŞILAŞTIRMASI')
+            .setTitle('⚔️ KAÇ CM MALAFAT DÜELLOSU')
             .setColor(0xf59e0b)
             .addFields(
               { name: `👤 ${p1.username}`, value: `**${user1Cm} cm**\n\`${makeBar(user1Cm)}\``, inline: true },
               { name: `⚔️ VS`, value: '⚡', inline: true },
               { name: `👤 ${p2.username}`, value: `**${user2Cm} cm**\n\`${makeBar(user2Cm)}\``, inline: true },
-              { name: '🏆 Sonuç', value: user1Cm > user2Cm ? `🎉 **${p1.username}** daha büyük!` : (user2Cm > user1Cm ? `🎉 **${p2.username}** daha büyük!` : '🤝 **Berabere!** İkiniz de eşitsiniz.') }
+              { name: '🏆 Kapışma Sonucu', value: user1Cm > user2Cm ? `🎉 **${p1.username}** heybetiyle **${p2.username}** kişisini ezip geçti!` : (user2Cm > user1Cm ? `🎉 **${p2.username}** devasa boyutuyla **${p1.username}** kişisini nakavt etti!` : '🤝 **Berabere!** İki malafat da eşit boyda çıktı, dostluk kazandı.') }
             );
 
           await interaction.reply({ embeds: [compEmbed], ephemeral: false });
@@ -425,7 +530,7 @@ module.exports = [
         const disabledRow = new ActionRowBuilder().addComponents(
           row.components.map(b => ButtonBuilder.from(b).setDisabled(true))
         );
-        replyMsg.edit({ components: [disabledRow] }).catch(() => {});
+        replyMsg.edit({ components: [disabledRow] }).catch(() => { });
       });
     }
   },
