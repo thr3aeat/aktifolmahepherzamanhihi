@@ -326,13 +326,107 @@ module.exports = [
     name: 'kaçcm',
     aliases: ['kaccm', 'kac-cm', 'kaç-cm', 'cm'],
     category: 'Eğlence',
-    description: 'Rastgele kaç cm olduğunu ölçer.',
+    description: 'Rastgele kaç cm olduğunu ölçer ve istatistik verir.',
     userPermissions: [],
     botPermissions: [],
     async execute(message) {
       const target = message.mentions.users.first() || message.author;
-      const cm = Math.floor(Math.random() * 35) + 1;
-      return message.reply(`📏 **${target.username}** kullanıcısının malafatı tam olarak **${cm} cm**! ¯\\_(ツ)_/¯`);
+
+      if (target.bot) {
+        return message.reply('🤖 **Ben bir robotum ama siber antenim tam 100 cm!** 📡⚡');
+      }
+
+      const calculateCm = () => Math.floor(Math.random() * 38) + 1;
+
+      const getTitleAndColor = (cm) => {
+        if (cm <= 5) return { title: 'Mikroskopik 🔬', comment: 'Arama kurtarma ekibi mercekle arıyor...', color: 0xef4444 };
+        if (cm <= 12) return { title: 'Mütevazı 🐣', comment: 'Şirin ve kullanışlı, şükretmek lazım.', color: 0xf59e0b };
+        if (cm <= 18) return { title: 'İdeal Boyut 📏', comment: 'Türkiye standartlarının gurur kaynağı!', color: 0x10b981 };
+        if (cm <= 25) return { title: 'Devasa 🦍', comment: 'Dikkat et, ruhsatlı silah sayılabilir!', color: 0x3b82f6 };
+        if (cm <= 32) return { title: 'Anakonda 🐍', comment: 'Çevredeki yapılar tahliye ediliyor!', color: 0x8b5cf6 };
+        return { title: 'Kozmik Gökdelen 🚀', comment: 'NASA uzay mekiği yerine yörüngeye fırlatmayı planlıyor!', color: 0xec4899 };
+      };
+
+      const makeBar = (cm) => {
+        const total = 10;
+        const filled = Math.min(total, Math.max(1, Math.round((cm / 40) * total)));
+        return '8' + '='.repeat(filled * 2) + 'D';
+      };
+
+      const createEmbed = (user, cm) => {
+        const info = getTitleAndColor(cm);
+        const bar = makeBar(cm);
+        return new EmbedBuilder()
+          .setTitle(`📏 KAÇ CM ÖLÇER - ${user.username}`)
+          .setThumbnail(user.displayAvatarURL({ dynamic: true }))
+          .setColor(info.color)
+          .addFields(
+            { name: '📐 Ölçüm Sonucu', value: `**${cm} cm**`, inline: true },
+            { name: '🏆 Unvan', value: `**${info.title}**`, inline: true },
+            { name: '💬 Yorum', value: info.comment },
+            { name: '📊 Görsel Ölçüm', value: `\`${bar}\`` }
+          )
+          .setFooter({ text: 'EkoYıldız Eğlence Sistemi', iconURL: message.client.user.displayAvatarURL() })
+          .setTimestamp();
+      };
+
+      let currentCm = calculateCm();
+      const embed = createEmbed(target, currentCm);
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`reroll_cm_${message.author.id}`)
+          .setLabel('🎲 Yeniden Ölç (Zar At)')
+          .setStyle(ButtonStyle.Primary)
+      );
+
+      if (message.mentions.users.first() && message.mentions.users.first().id !== message.author.id) {
+        row.addComponents(
+          new ButtonBuilder()
+            .setCustomId(`compare_cm_${message.author.id}`)
+            .setLabel('⚔️ Düello / Karşılaştır')
+            .setStyle(ButtonStyle.Success)
+        );
+      }
+
+      const replyMsg = await message.reply({ embeds: [embed], components: [row] });
+      const collector = replyMsg.createMessageComponentCollector({ time: 60000 });
+
+      collector.on('collect', async (interaction) => {
+        if (interaction.user.id !== message.author.id) {
+          return interaction.reply({ content: '❌ Bu butonları sadece komutu kullanan kişi tıklayabilir!', ephemeral: true });
+        }
+
+        if (interaction.customId.startsWith('reroll_cm_')) {
+          currentCm = calculateCm();
+          const newEmbed = createEmbed(target, currentCm);
+          await interaction.update({ embeds: [newEmbed], components: [row] });
+        } else if (interaction.customId.startsWith('compare_cm_')) {
+          const user1Cm = currentCm;
+          const user2Cm = calculateCm();
+          const p1 = target;
+          const p2 = message.author;
+
+          const compEmbed = new EmbedBuilder()
+            .setTitle('⚔️ KAÇ CM DÜELLOSU & KARŞILAŞTIRMASI')
+            .setColor(0xf59e0b)
+            .addFields(
+              { name: `👤 ${p1.username}`, value: `**${user1Cm} cm**\n\`${makeBar(user1Cm)}\``, inline: true },
+              { name: `⚔️ VS`, value: '⚡', inline: true },
+              { name: `👤 ${p2.username}`, value: `**${user2Cm} cm**\n\`${makeBar(user2Cm)}\``, inline: true },
+              { name: '🏆 Sonuç', value: user1Cm > user2Cm ? `🎉 **${p1.username}** daha büyük!` : (user2Cm > user1Cm ? `🎉 **${p2.username}** daha büyük!` : '🤝 **Berabere!** İkiniz de eşitsiniz.') }
+            );
+
+          await interaction.reply({ embeds: [compEmbed], ephemeral: false });
+        }
+      });
+
+      collector.on('end', () => {
+        const disabledRow = new ActionRowBuilder().addComponents(
+          row.components.map(b => ButtonBuilder.from(b).setDisabled(true))
+        );
+        replyMsg.edit({ components: [disabledRow] }).catch(() => {});
+      });
     }
   },
   {
